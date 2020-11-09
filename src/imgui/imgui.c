@@ -7,7 +7,7 @@
 #include "rizz/imgui-extra.h"
 #include "rizz/rizz.h"
 
-#include "imguizmo/ImGuizmo.h"
+#include "imgui-internal.h"
 
 #include "sx/allocator.h"
 #include "sx/array.h"
@@ -33,9 +33,10 @@ SX_PRAGMA_DIAGNOSTIC_POP()
 #endif
 
 //
-#define IMGUI_VERSION "1.77"
+#define IMGUI_VERSION "1.79"
 #define MAX_VERTS 32768      // 32k
 #define MAX_INDICES 98304    // 96k
+#define MAX_BUFFERED_FRAME_TIMES 120
 
 typedef struct rizz_api_gfx rizz_api_gfx;
 static void imgui__render(void);
@@ -44,11 +45,6 @@ RIZZ_STATE static rizz_api_core* the_core;
 RIZZ_STATE static rizz_api_plugin* the_plugin;
 RIZZ_STATE static rizz_api_gfx* the_gfx;
 RIZZ_STATE static rizz_api_app* the_app;
-
-// fwd: log-window.c
-void imgui__show_log(bool* p_open);
-bool imgui__log_init(rizz_api_core* core, const sx_alloc* alloc, uint32_t buffer_size);
-void imgui__log_release(void);
 
 ////////////////////////////////////////////////////////////////////////////////////////////////////
 // API
@@ -63,13 +59,6 @@ rizz_api_imgui the__imgui = {
     .EndFrame = igEndFrame,
     .Render = imgui__render,
     .GetDrawData = igGetDrawData,
-    .ShowDemoWindow = igShowDemoWindow,
-    .ShowAboutWindow = igShowAboutWindow,
-    .ShowMetricsWindow = igShowMetricsWindow,
-    .ShowStyleEditor = igShowStyleEditor,
-    .ShowStyleSelector = igShowStyleSelector,
-    .ShowFontSelector = igShowFontSelector,
-    .ShowUserGuide = igShowUserGuide,
     .GetVersion = igGetVersion,
     .StyleColorsDark = igStyleColorsDark,
     .StyleColorsClassic = igStyleColorsClassic,
@@ -207,7 +196,7 @@ rizz_api_imgui the__imgui = {
     .EndCombo = igEndCombo,
     .ComboStr_arr = igComboStr_arr,
     .ComboStr = igComboStr,
-    .ComboFnPtr = igComboFnPtr,
+    .ComboFnBoolPtr = igComboFnBoolPtr,
     .DragFloat = igDragFloat,
     .DragFloat2 = igDragFloat2,
     .DragFloat3 = igDragFloat3,
@@ -274,14 +263,14 @@ rizz_api_imgui the__imgui = {
     .SelectableBool = igSelectableBool,
     .SelectableBoolPtr = igSelectableBoolPtr,
     .ListBoxStr_arr = igListBoxStr_arr,
-    .ListBoxFnPtr = igListBoxFnPtr,
+    .ListBoxFnBoolPtr = igListBoxFnBoolPtr,
     .ListBoxHeaderVec2 = igListBoxHeaderVec2,
     .ListBoxHeaderInt = igListBoxHeaderInt,
     .ListBoxFooter = igListBoxFooter,
     .PlotLinesFloatPtr = igPlotLinesFloatPtr,
-    .PlotLinesFnPtr = igPlotLinesFnPtr,
+    .PlotLinesFnFloatPtr = igPlotLinesFnFloatPtr,
     .PlotHistogramFloatPtr = igPlotHistogramFloatPtr,
-    .PlotHistogramFnPtr = igPlotHistogramFnPtr,
+    .PlotHistogramFnFloatPtr = igPlotHistogramFnFloatPtr,
     .ValueBool = igValueBool,
     .ValueInt = igValueInt,
     .ValueUint = igValueUint,
@@ -298,16 +287,16 @@ rizz_api_imgui the__imgui = {
     .EndTooltip = igEndTooltip,
     .SetTooltip = igSetTooltip,
     .SetTooltipV = igSetTooltipV,
-    .OpenPopup = igOpenPopup,
     .BeginPopup = igBeginPopup,
+    .BeginPopupModal = igBeginPopupModal,
+    .EndPopup = igEndPopup,
+    .OpenPopup = igOpenPopup,
+    .OpenPopupOnItemClick = igOpenPopupOnItemClick,
+    .CloseCurrentPopup = igCloseCurrentPopup,
     .BeginPopupContextItem = igBeginPopupContextItem,
     .BeginPopupContextWindow = igBeginPopupContextWindow,
     .BeginPopupContextVoid = igBeginPopupContextVoid,
-    .BeginPopupModal = igBeginPopupModal,
-    .EndPopup = igEndPopup,
-    .OpenPopupOnItemClick = igOpenPopupOnItemClick,
     .IsPopupOpenStr = igIsPopupOpenStr,
-    .CloseCurrentPopup = igCloseCurrentPopup,
     .Columns = igColumns,
     .NextColumn = igNextColumn,
     .GetColumnIndex = igGetColumnIndex,
@@ -320,6 +309,7 @@ rizz_api_imgui the__imgui = {
     .EndTabBar = igEndTabBar,
     .BeginTabItem = igBeginTabItem,
     .EndTabItem = igEndTabItem,
+    .TabItemButton = igTabItemButton,
     .SetTabItemClosed = igSetTabItemClosed,
     .DockSpace = igDockSpace,
     .DockSpaceOverViewport = igDockSpaceOverViewport,
@@ -378,6 +368,8 @@ rizz_api_imgui the__imgui = {
     .CalcTextSize = igCalcTextSize,
     .ColorConvertU32ToFloat4 = igColorConvertU32ToFloat4,
     .ColorConvertFloat4ToU32 = igColorConvertFloat4ToU32,
+    .ColorConvertRGBtoHSV = igColorConvertRGBtoHSV,
+    .ColorConvertHSVtoRGB = igColorConvertHSVtoRGB,
     .GetKeyIndex = igGetKeyIndex,
     .IsKeyDown = igIsKeyDown,
     .IsKeyPressed = igIsKeyPressed,
@@ -455,6 +447,12 @@ rizz_api_imgui the__imgui = {
     .ImFileLoadToMemory = igImFileLoadToMemory,
     .ImPowFloat = igImPowFloat,
     .ImPowdouble = igImPowdouble,
+    .ImLogFloat = igImLogFloat,
+    .ImLogdouble = igImLogdouble,
+    .ImAbsFloat = igImAbsFloat,
+    .ImAbsdouble = igImAbsdouble,
+    .ImSignFloat = igImSignFloat,
+    .ImSigndouble = igImSigndouble,
     .ImMin = igImMin,
     .ImMax = igImMax,
     .ImClamp = igImClamp,
@@ -497,6 +495,7 @@ rizz_api_imgui the__imgui = {
     .SetWindowPosWindowPtr = igSetWindowPosWindowPtr,
     .SetWindowSizeWindowPtr = igSetWindowSizeWindowPtr,
     .SetWindowCollapsedWindowPtr = igSetWindowCollapsedWindowPtr,
+    .SetWindowHitTestHole = igSetWindowHitTestHole,
     .FocusWindow = igFocusWindow,
     .FocusTopMostWindowUnderOne = igFocusTopMostWindowUnderOne,
     .BringWindowToFocusFront = igBringWindowToFocusFront,
@@ -518,6 +517,7 @@ rizz_api_imgui the__imgui = {
     .ShowViewportThumbnails = igShowViewportThumbnails,
     .MarkIniSettingsDirtyNil = igMarkIniSettingsDirtyNil,
     .MarkIniSettingsDirtyWindowPtr = igMarkIniSettingsDirtyWindowPtr,
+    .ClearIniSettings = igClearIniSettings,
     .CreateNewWindowSettings = igCreateNewWindowSettings,
     .FindWindowSettings = igFindWindowSettings,
     .FindOrCreateWindowSettings = igFindOrCreateWindowSettings,
@@ -540,11 +540,13 @@ rizz_api_imgui the__imgui = {
     .KeepAliveID = igKeepAliveID,
     .MarkItemEdited = igMarkItemEdited,
     .PushOverrideID = igPushOverrideID,
+    .GetIDWithSeed = igGetIDWithSeed,
     .ItemSizeVec2 = igItemSizeVec2,
     .ItemSizeRect = igItemSizeRect,
     .ItemAdd = igItemAdd,
     .ItemHoverable = igItemHoverable,
     .IsClippedEx = igIsClippedEx,
+    .SetLastItemData = igSetLastItemData,
     .FocusableItemRegister = igFocusableItemRegister,
     .FocusableItemUnregister = igFocusableItemUnregister,
     .CalcItemSize = igCalcItemSize,
@@ -591,7 +593,7 @@ rizz_api_imgui the__imgui = {
     .GetMergedKeyModFlags = igGetMergedKeyModFlags,
     .DockContextInitialize = igDockContextInitialize,
     .DockContextShutdown = igDockContextShutdown,
-    .DockContextOnLoadSettings = igDockContextOnLoadSettings,
+    .DockContextClearNodes = igDockContextClearNodes,
     .DockContextRebuildNodes = igDockContextRebuildNodes,
     .DockContextUpdateUndocking = igDockContextUpdateUndocking,
     .DockContextUpdateDocking = igDockContextUpdateDocking,
@@ -601,6 +603,7 @@ rizz_api_imgui the__imgui = {
     .DockContextQueueUndockNode = igDockContextQueueUndockNode,
     .DockContextCalcDropPosForDocking = igDockContextCalcDropPosForDocking,
     .DockNodeGetRootNode = igDockNodeGetRootNode,
+    .DockNodeGetDepth = igDockNodeGetDepth,
     .GetWindowDockNode = igGetWindowDockNode,
     .GetWindowAlwaysWantOwnTabBar = igGetWindowAlwaysWantOwnTabBar,
     .BeginDocked = igBeginDocked,
@@ -624,6 +627,7 @@ rizz_api_imgui the__imgui = {
     .BeginDragDropTargetCustom = igBeginDragDropTargetCustom,
     .ClearDragDrop = igClearDragDrop,
     .IsDragDropPayloadBeingAccepted = igIsDragDropPayloadBeingAccepted,
+    .SetWindowClipRectBeforeSetChannel = igSetWindowClipRectBeforeSetChannel,
     .BeginColumns = igBeginColumns,
     .EndColumns = igEndColumns,
     .PushColumnClipRect = igPushColumnClipRect,
@@ -639,7 +643,8 @@ rizz_api_imgui the__imgui = {
     .TabBarAddTab = igTabBarAddTab,
     .TabBarRemoveTab = igTabBarRemoveTab,
     .TabBarCloseTab = igTabBarCloseTab,
-    .TabBarQueueChangeTabOrder = igTabBarQueueChangeTabOrder,
+    .TabBarQueueReorder = igTabBarQueueReorder,
+    .TabBarProcessReorder = igTabBarProcessReorder,
     .TabItemEx = igTabItemEx,
     .TabItemCalcSize = igTabItemCalcSize,
     .TabItemBackground = igTabItemBackground,
@@ -670,6 +675,7 @@ rizz_api_imgui the__imgui = {
     .ArrowButtonEx = igArrowButtonEx,
     .Scrollbar = igScrollbar,
     .ScrollbarEx = igScrollbarEx,
+    .ImageButtonEx = igImageButtonEx,
     .GetWindowScrollbarRect = igGetWindowScrollbarRect,
     .GetWindowScrollbarID = igGetWindowScrollbarID,
     .GetWindowResizeID = igGetWindowResizeID,
@@ -685,6 +691,8 @@ rizz_api_imgui the__imgui = {
     .DataTypeFormatString = igDataTypeFormatString,
     .DataTypeApplyOp = igDataTypeApplyOp,
     .DataTypeApplyOpFromText = igDataTypeApplyOpFromText,
+    .DataTypeCompare = igDataTypeCompare,
+    .DataTypeClamp = igDataTypeClamp,
     .InputTextEx = igInputTextEx,
     .TempInputText = igTempInputText,
     .TempInputScalar = igTempInputScalar,
@@ -705,12 +713,11 @@ rizz_api_imgui the__imgui = {
     .ImFontAtlasBuildSetupFont = igImFontAtlasBuildSetupFont,
     .ImFontAtlasBuildPackCustomRects = igImFontAtlasBuildPackCustomRects,
     .ImFontAtlasBuildFinish = igImFontAtlasBuildFinish,
+    .ImFontAtlasBuildRender1bppRectFromString = igImFontAtlasBuildRender1bppRectFromString,
     .ImFontAtlasBuildMultiplyCalcLookupTable = igImFontAtlasBuildMultiplyCalcLookupTable,
     .ImFontAtlasBuildMultiplyRectAlpha8 = igImFontAtlasBuildMultiplyRectAlpha8,
     .LogText = igLogText,
     .GET_FLT_MAX = igGET_FLT_MAX,
-    .ColorConvertRGBtoHSV = igColorConvertRGBtoHSV,
-    .ColorConvertHSVtoRGB = igColorConvertHSVtoRGB,
     .ImGuiIO_AddInputCharacter = ImGuiIO_AddInputCharacter,
     .ImGuiIO_AddInputCharacterUTF16 = ImGuiIO_AddInputCharacterUTF16,
     .ImGuiIO_AddInputCharactersUTF8 = ImGuiIO_AddInputCharactersUTF8,
@@ -761,8 +768,6 @@ rizz_api_imgui the__imgui = {
     .ImDrawList_ChannelsSplit = ImDrawList_ChannelsSplit,
     .ImDrawList_ChannelsMerge = ImDrawList_ChannelsMerge,
     .ImDrawList_ChannelsSetCurrent = ImDrawList_ChannelsSetCurrent,
-    .ImDrawList_Clear = ImDrawList_Clear,
-    .ImDrawList_ClearFreeMemory = ImDrawList_ClearFreeMemory,
     .ImDrawList_PrimReserve = ImDrawList_PrimReserve,
     .ImDrawList_PrimUnreserve = ImDrawList_PrimUnreserve,
     .ImDrawList_PrimRect = ImDrawList_PrimRect,
@@ -771,8 +776,12 @@ rizz_api_imgui the__imgui = {
     .ImDrawList_PrimWriteVtx = ImDrawList_PrimWriteVtx,
     .ImDrawList_PrimWriteIdx = ImDrawList_PrimWriteIdx,
     .ImDrawList_PrimVtx = ImDrawList_PrimVtx,
-    .ImDrawList_UpdateClipRect = ImDrawList_UpdateClipRect,
-    .ImDrawList_UpdateTextureID = ImDrawList_UpdateTextureID,
+    .ImDrawList__ResetForNewFrame = ImDrawList__ResetForNewFrame,
+    .ImDrawList__ClearFreeMemory = ImDrawList__ClearFreeMemory,
+    .ImDrawList__PopUnusedDrawCmd = ImDrawList__PopUnusedDrawCmd,
+    .ImDrawList__OnChangedClipRect = ImDrawList__OnChangedClipRect,
+    .ImDrawList__OnChangedTextureID = ImDrawList__OnChangedTextureID,
+    .ImDrawList__OnChangedVtxOffset = ImDrawList__OnChangedVtxOffset,
     .ImFont_ImFont = ImFont_ImFont,
     .ImFont_destroy = ImFont_destroy,
     .ImFont_FindGlyph = ImFont_FindGlyph,
@@ -830,9 +839,9 @@ rizz_api_imgui the__imgui = {
     .ImGuiPayload_IsDelivery = ImGuiPayload_IsDelivery,
     .ImGuiListClipper_ImGuiListClipper = ImGuiListClipper_ImGuiListClipper,
     .ImGuiListClipper_destroy = ImGuiListClipper_destroy,
-    .ImGuiListClipper_Step = ImGuiListClipper_Step,
     .ImGuiListClipper_Begin = ImGuiListClipper_Begin,
     .ImGuiListClipper_End = ImGuiListClipper_End,
+    .ImGuiListClipper_Step = ImGuiListClipper_Step,
     .ImGuiTextFilter_ImGuiTextFilter = ImGuiTextFilter_ImGuiTextFilter,
     .ImGuiTextFilter_destroy = ImGuiTextFilter_destroy,
     .ImGuiTextFilter_Draw = ImGuiTextFilter_Draw,
@@ -879,6 +888,8 @@ SX_PRAGMA_DIAGNOSTIC_POP();
 
 typedef struct imgui__context {
     ImGuiContext* ctx;
+    int max_verts;
+    int max_indices;
     ImDrawVert* verts;
     uint16_t* indices;
     sg_shader shader;
@@ -893,6 +904,9 @@ typedef struct imgui__context {
     ImWchar* char_input;    // sx_array
     ImGuiMouseCursor last_cursor;
     sg_imgui_t sg_imgui;
+    float fts[MAX_BUFFERED_FRAME_TIMES];
+    int ft_iter;
+    int ft_iter_nomod;
 } imgui__context;
 
 typedef struct imgui__shader_uniforms {
@@ -918,6 +932,113 @@ static void* imgui__malloc(size_t sz, void* user_data)
 static void imgui__free(void* ptr, void* user_data)
 {
     sx_free((const sx_alloc*)user_data, ptr);
+}
+
+static bool imgui__resize_buffers(int max_verts, int max_indices)
+{
+    const sx_alloc* alloc = the_core->alloc(RIZZ_MEMID_TOOLSET);
+
+    g_imgui.verts = (ImDrawVert*)sx_realloc(alloc, g_imgui.verts, sizeof(ImDrawVert) * max_verts);
+    g_imgui.indices = (uint16_t*)sx_realloc(alloc, g_imgui.indices, sizeof(uint16_t) * max_indices);
+    if (!g_imgui.verts || !g_imgui.indices) {
+        sx_out_of_memory();
+        return false;
+    }
+
+    the_gfx->destroy_buffer(g_imgui.bind.vertex_buffers[0]);
+    the_gfx->destroy_buffer(g_imgui.bind.index_buffer);
+    g_imgui.bind.vertex_buffers[0] =
+        the_gfx->make_buffer(&(sg_buffer_desc){ .type = SG_BUFFERTYPE_VERTEXBUFFER,
+                                                .usage = SG_USAGE_STREAM,
+                                                .size = sizeof(ImDrawVert) * max_verts });
+    g_imgui.bind.index_buffer =
+        the_gfx->make_buffer(&(sg_buffer_desc){ .type = SG_BUFFERTYPE_INDEXBUFFER,
+                                                .usage = SG_USAGE_STREAM,
+                                                .size = sizeof(uint16_t) * max_indices });
+    if (!g_imgui.bind.vertex_buffers[0].id || !g_imgui.bind.index_buffer.id) {
+        return false;
+    }
+
+    g_imgui.max_verts = max_verts;
+    g_imgui.max_indices = max_indices;
+    return true;
+}
+
+static void apply_theme(void)
+{
+    ImGuiStyle* style = the__imgui.GetStyle();
+    
+    style->WindowTitleAlign = sx_vec2f(0.5f, 0.5f);
+
+    style->ScrollbarSize = 18;
+    style->GrabMinSize = 12;
+    style->WindowBorderSize = 0;
+    style->ChildBorderSize = 0;
+    style->PopupBorderSize = 0;
+    style->FrameBorderSize = 0;
+    style->TabBorderSize = 0;
+
+    style->WindowRounding = 0;
+    style->ChildRounding = 3;
+    style->FrameRounding = 3;
+    style->PopupRounding = 3;
+    style->ScrollbarRounding = 3;
+    style->GrabRounding = 3;
+    style->TabRounding = 2;
+
+    style->AntiAliasedFill = true;
+    style->AntiAliasedLines = true;
+
+    // clang-format off
+    style->Colors[ImGuiCol_Text]                   = sx_vec4f(1.00f, 1.00f, 1.00f, 0.89f);
+    style->Colors[ImGuiCol_TextDisabled]           = sx_vec4f(1.00f, 1.00f, 1.00f, 0.39f);
+    style->Colors[ImGuiCol_WindowBg]               = sx_vec4f(0.20f, 0.20f, 0.20f, 1.00f);
+    style->Colors[ImGuiCol_ChildBg]                = sx_vec4f(0.24f, 0.24f, 0.24f, 1.00f);
+    style->Colors[ImGuiCol_PopupBg]                = sx_vec4f(0.20f, 0.20f, 0.20f, 1.00f);
+    style->Colors[ImGuiCol_Border]                 = sx_vec4f(1.00f, 1.00f, 1.00f, 0.10f);
+    style->Colors[ImGuiCol_BorderShadow]           = sx_vec4f(0.18f, 0.18f, 0.18f, 1.00f);
+    style->Colors[ImGuiCol_FrameBg]                = sx_vec4f(0.14f, 0.14f, 0.14f, 1.00f);
+    style->Colors[ImGuiCol_FrameBgHovered]         = sx_vec4f(1.00f, 1.00f, 1.00f, 0.08f);
+    style->Colors[ImGuiCol_FrameBgActive]          = sx_vec4f(1.00f, 1.00f, 1.00f, 0.12f);
+    style->Colors[ImGuiCol_TitleBg]                = sx_vec4f(0.22f, 0.22f, 0.22f, 1.00f);
+    style->Colors[ImGuiCol_TitleBgActive]          = sx_vec4f(0.14f, 0.14f, 0.14f, 1.00f);
+    style->Colors[ImGuiCol_TitleBgCollapsed]       = sx_vec4f(0.00f, 0.00f, 0.00f, 0.51f);
+    style->Colors[ImGuiCol_MenuBarBg]              = sx_vec4f(0.14f, 0.14f, 0.14f, 1.00f);
+    style->Colors[ImGuiCol_ScrollbarBg]            = sx_vec4f(0.02f, 0.02f, 0.02f, 0.53f);
+    style->Colors[ImGuiCol_ScrollbarGrab]          = sx_vec4f(0.31f, 0.31f, 0.31f, 1.00f);
+    style->Colors[ImGuiCol_ScrollbarGrabHovered]   = sx_vec4f(0.41f, 0.41f, 0.41f, 1.00f);
+    style->Colors[ImGuiCol_ScrollbarGrabActive]    = sx_vec4f(0.51f, 0.51f, 0.51f, 1.00f);
+    style->Colors[ImGuiCol_CheckMark]              = sx_vec4f(0.80f, 0.47f, 0.00f, 1.00f);
+    style->Colors[ImGuiCol_SliderGrab]             = sx_vec4f(0.39f, 0.39f, 0.39f, 1.00f);
+    style->Colors[ImGuiCol_SliderGrabActive]       = sx_vec4f(0.80f, 0.47f, 0.00f, 1.00f);
+    style->Colors[ImGuiCol_Button]                 = sx_vec4f(0.33f, 0.33f, 0.33f, 1.00f);
+    style->Colors[ImGuiCol_ButtonHovered]          = sx_vec4f(1.00f, 1.00f, 1.00f, 0.39f);
+    style->Colors[ImGuiCol_ButtonActive]           = sx_vec4f(1.00f, 1.00f, 1.00f, 0.55f);
+    style->Colors[ImGuiCol_Header]                 = sx_vec4f(0.00f, 0.00f, 0.00f, 0.39f);
+    style->Colors[ImGuiCol_HeaderHovered]          = sx_vec4f(1.00f, 1.00f, 1.00f, 0.16f);
+    style->Colors[ImGuiCol_HeaderActive]           = sx_vec4f(1.00f, 1.00f, 1.00f, 0.16f);
+    style->Colors[ImGuiCol_Separator]              = sx_vec4f(1.00f, 1.00f, 1.00f, 0.15f);
+    style->Colors[ImGuiCol_SeparatorHovered]       = sx_vec4f(0.80f, 0.47f, 0.00f, 0.50f);
+    style->Colors[ImGuiCol_SeparatorActive]        = sx_vec4f(0.80f, 0.47f, 0.00f, 1.00f);
+    style->Colors[ImGuiCol_ResizeGrip]             = sx_vec4f(1.00f, 1.00f, 1.00f, 0.25f);
+    style->Colors[ImGuiCol_ResizeGripHovered]      = sx_vec4f(1.00f, 1.00f, 1.00f, 0.31f);
+    style->Colors[ImGuiCol_ResizeGripActive]       = sx_vec4f(0.80f, 0.47f, 0.00f, 0.86f);
+    style->Colors[ImGuiCol_Tab]                    = sx_vec4f(0.14f, 0.14f, 0.14f, 1.00f);
+    style->Colors[ImGuiCol_TabHovered]             = sx_vec4f(0.80f, 0.47f, 0.00f, 0.25f);
+    style->Colors[ImGuiCol_TabActive]              = sx_vec4f(0.80f, 0.47f, 0.00f, 0.59f);
+    style->Colors[ImGuiCol_TabUnfocused]           = sx_vec4f(0.24f, 0.24f, 0.24f, 1.00f);
+    style->Colors[ImGuiCol_TabUnfocusedActive]     = sx_vec4f(0.10f, 0.10f, 0.10f, 1.00f);
+    style->Colors[ImGuiCol_PlotLines]              = sx_vec4f(0.86f, 0.86f, 0.86f, 1.00f);
+    style->Colors[ImGuiCol_PlotLinesHovered]       = sx_vec4f(0.80f, 0.47f, 0.00f, 1.00f);
+    style->Colors[ImGuiCol_PlotHistogram]          = sx_vec4f(0.80f, 0.47f, 0.00f, 1.00f);
+    style->Colors[ImGuiCol_PlotHistogramHovered]   = sx_vec4f(1.00f, 0.89f, 0.62f, 1.00f);
+    style->Colors[ImGuiCol_TextSelectedBg]         = sx_vec4f(0.80f, 0.47f, 0.00f, 0.25f);
+    style->Colors[ImGuiCol_DragDropTarget]         = sx_vec4f(1.00f, 0.86f, 0.00f, 0.86f);
+    style->Colors[ImGuiCol_NavHighlight]           = sx_vec4f(0.80f, 0.47f, 0.00f, 1.00f);
+    style->Colors[ImGuiCol_NavWindowingHighlight]  = sx_vec4f(1.00f, 1.00f, 1.00f, 0.71f);
+    style->Colors[ImGuiCol_NavWindowingDimBg]      = sx_vec4f(0.80f, 0.80f, 0.80f, 0.20f);
+    style->Colors[ImGuiCol_ModalWindowDimBg]       = sx_vec4f(0.80f, 0.80f, 0.80f, 0.35f);
+    // clang-format on
 }
 
 static bool imgui__init(void)
@@ -967,6 +1088,7 @@ static bool imgui__init(void)
     conf->KeyMap[ImGuiKey_Backspace] = RIZZ_APP_KEYCODE_BACKSPACE;
     conf->KeyMap[ImGuiKey_Space] = RIZZ_APP_KEYCODE_SPACE;
     conf->KeyMap[ImGuiKey_Enter] = RIZZ_APP_KEYCODE_ENTER;
+    conf->KeyMap[ImGuiKey_KeyPadEnter] = RIZZ_APP_KEYCODE_KP_ENTER;
     conf->KeyMap[ImGuiKey_Escape] = RIZZ_APP_KEYCODE_ESCAPE;
     conf->KeyMap[ImGuiKey_A] = RIZZ_APP_KEYCODE_A;
     conf->KeyMap[ImGuiKey_C] = RIZZ_APP_KEYCODE_C;
@@ -975,22 +1097,15 @@ static bool imgui__init(void)
     conf->KeyMap[ImGuiKey_Y] = RIZZ_APP_KEYCODE_Y;
     conf->KeyMap[ImGuiKey_Z] = RIZZ_APP_KEYCODE_Z;
 
+    conf->ConfigFlags |= ImGuiConfigFlags_DockingEnable;
+    conf->BackendFlags |= ImGuiBackendFlags_HasMouseCursors;
+    conf->ConfigWindowsResizeFromEdges = true;
+    
     // Setup graphic objects
-    g_imgui.verts = (ImDrawVert*)sx_malloc(alloc, sizeof(ImDrawVert) * MAX_VERTS);
-    g_imgui.indices = (uint16_t*)sx_malloc(alloc, sizeof(uint16_t) * MAX_INDICES);
-    if (!g_imgui.verts || !g_imgui.indices) {
-        sx_out_of_memory();
+    if (!imgui__resize_buffers(MAX_VERTS, MAX_INDICES)) {
+        rizz_log_error("imgui: could not create vertex/index buffers");
         return false;
     }
-
-    g_imgui.bind.vertex_buffers[0] =
-        the_gfx->make_buffer(&(sg_buffer_desc){ .type = SG_BUFFERTYPE_VERTEXBUFFER,
-                                                .usage = SG_USAGE_STREAM,
-                                                .size = sizeof(ImDrawVert) * MAX_VERTS });
-    g_imgui.bind.index_buffer =
-        the_gfx->make_buffer(&(sg_buffer_desc){ .type = SG_BUFFERTYPE_INDEXBUFFER,
-                                                .usage = SG_USAGE_STREAM,
-                                                .size = sizeof(uint16_t) * MAX_INDICES });
 
     uint8_t* font_pixels;
     int font_width, font_height, bpp;
@@ -1019,7 +1134,8 @@ static bool imgui__init(void)
     sg_pipeline_desc pip_desc = { .layout.buffers[0].stride = sizeof(ImDrawVert),
                                   .shader = g_imgui.shader,
                                   .index_type = SG_INDEXTYPE_UINT16,
-                                  .rasterizer = { .cull_mode = SG_CULLMODE_BACK },
+                                  
+                                  .rasterizer = { .cull_mode = SG_CULLMODE_NONE },
                                   .blend = { .enabled = true,
                                              .src_factor_rgb = SG_BLENDFACTOR_SRC_ALPHA,
                                              .dst_factor_rgb = SG_BLENDFACTOR_ONE_MINUS_SRC_ALPHA,
@@ -1027,6 +1143,7 @@ static bool imgui__init(void)
     g_imgui.pip = the_gfx->make_pipeline(
         the_gfx->shader_bindto_pipeline(&shader, &pip_desc, &k__imgui_vertex));
 
+    apply_theme();
     the_core->tmp_alloc_pop();
 
     return true;
@@ -1039,20 +1156,13 @@ static void imgui__release()
     if (g_imgui.ctx)
         the__imgui.DestroyContext(g_imgui.ctx);
 
-    if (g_imgui.pip.id)
-        the_gfx->destroy_pipeline(g_imgui.pip);
-    if (g_imgui.bind.vertex_buffers[0].id)
-        the_gfx->destroy_buffer(g_imgui.bind.vertex_buffers[0]);
-    if (g_imgui.bind.index_buffer.id)
-        the_gfx->destroy_buffer(g_imgui.bind.index_buffer);
-    if (g_imgui.shader.id)
-        the_gfx->destroy_shader(g_imgui.shader);
-    if (g_imgui.font_tex.id)
-        the_gfx->destroy_image(g_imgui.font_tex);
-    if (g_imgui.verts)
-        sx_free(alloc, g_imgui.verts);
-    if (g_imgui.indices)
-        sx_free(alloc, g_imgui.indices);
+    the_gfx->destroy_pipeline(g_imgui.pip);
+    the_gfx->destroy_buffer(g_imgui.bind.vertex_buffers[0]);
+    the_gfx->destroy_buffer(g_imgui.bind.index_buffer);
+    the_gfx->destroy_shader(g_imgui.shader);
+    the_gfx->destroy_image(g_imgui.font_tex);
+    sx_free(alloc, g_imgui.verts);
+    sx_free(alloc, g_imgui.indices);
     sx_array_free(the_core->alloc(RIZZ_MEMID_TOOLSET), g_imgui.char_input);
 }
 
@@ -1118,6 +1228,19 @@ static void imgui__frame()
             io->MouseDown[i] = false;
         }
     }
+
+    io->KeyShift = the_app->key_pressed(RIZZ_APP_KEYCODE_LEFT_SHIFT) ||
+                   the_app->key_pressed(RIZZ_APP_KEYCODE_RIGHT_SHIFT);
+
+    io->KeyAlt = the_app->key_pressed(RIZZ_APP_KEYCODE_LEFT_ALT) ||
+                   the_app->key_pressed(RIZZ_APP_KEYCODE_RIGHT_ALT);
+
+    io->KeyCtrl = the_app->key_pressed(RIZZ_APP_KEYCODE_LEFT_CONTROL) ||
+                   the_app->key_pressed(RIZZ_APP_KEYCODE_RIGHT_CONTROL);
+
+    io->KeySuper = the_app->key_pressed(RIZZ_APP_KEYCODE_LEFT_SUPER) ||
+                   the_app->key_pressed(RIZZ_APP_KEYCODE_RIGHT_SUPER);
+
     io->MouseWheel = g_imgui.mouse_wheel;
     io->MouseWheelH = g_imgui.mouse_wheel_h;
     g_imgui.mouse_wheel_h = g_imgui.mouse_wheel = 0;
@@ -1138,8 +1261,8 @@ static void imgui__frame()
     }
 
     the__imgui.NewFrame();
-    ImGuizmo_BeginFrame();
-    ImGuizmo_SetRect(0, 0, io->DisplaySize.x, io->DisplaySize.y);
+    imgui__imguizmo_begin();
+    imgui__imguizmo_setrect(0, 0, io->DisplaySize.x, io->DisplaySize.y);
 
     // Update OS mouse cursor with the cursor requested by imgui
     ImGuiMouseCursor mouse_cursor =
@@ -1148,6 +1271,8 @@ static void imgui__frame()
         g_imgui.last_cursor = mouse_cursor;
         imgui__update_cursor();
     }
+
+    imgui__log_update();
 }
 
 static void imgui__draw(ImDrawData* draw_data)
@@ -1167,14 +1292,24 @@ static void imgui__draw(ImDrawData* draw_data)
         const int dl_num_verts = dl->VtxBuffer.Size;
         const int dl_num_indices = dl->IdxBuffer.Size;
 
-        if ((num_verts + dl_num_verts) > MAX_VERTS) {
-            sx_assert(0 && "imgui: vertex buffer overflowed");
-            break;
+        int max_verts = g_imgui.max_verts;
+        int max_indices = g_imgui.max_indices;
+        if ((num_verts + dl_num_verts) > max_verts) {
+            rizz_log_warn("imgui:maximum vertex count %d exceeded, growing buffers", g_imgui.max_verts);
+            max_verts <<= 1;
         }
 
-        if ((num_indices + dl_num_indices) > MAX_INDICES) {
-            sx_assert(0 && "imgui: index buffer overflowed");
-            break;
+        if ((num_indices + dl_num_indices) > max_indices) {
+            rizz_log_warn("imgui:maximum index count %d exceeded, growing buffers", g_imgui.max_indices);
+            max_indices <<= 1;
+        }
+
+        if (max_verts > g_imgui.max_verts || max_indices > g_imgui.max_indices) {
+            bool _r = imgui__resize_buffers(max_verts, max_indices);
+            sx_unused(_r);
+            sx_assert_always(_r && "imgui: vertex/index buffer creation failed");
+            verts = g_imgui.verts;
+            indices = g_imgui.indices;
         }
 
         sx_memcpy(&verts[num_verts], dl->VtxBuffer.Data, dl_num_verts * sizeof(ImDrawVert));
@@ -1186,9 +1321,8 @@ static void imgui__draw(ImDrawData* draw_data)
         num_verts += dl_num_verts;
     }
 
-    the_gfx->imm.update_buffer(g_imgui.bind.vertex_buffers[0], verts,
-                               MAX_VERTS * sizeof(ImDrawVert));
-    the_gfx->imm.update_buffer(g_imgui.bind.index_buffer, indices, MAX_INDICES * sizeof(uint16_t));
+    the_gfx->imm.update_buffer(g_imgui.bind.vertex_buffers[0], verts, num_verts * sizeof(ImDrawVert));
+    the_gfx->imm.update_buffer(g_imgui.bind.index_buffer, indices, num_indices * sizeof(uint16_t));
 
     // Draw the list
     ImGuiIO* io = the__imgui.GetIO();
@@ -1338,107 +1472,6 @@ static sx_vec2 imgui__project_to_screen(const sx_vec3 pt, const sx_mat4* mvp, co
     return sx_vec2f(trans.x, trans.y);
 }
 
-// gizmo
-static void imgui__gizmo_set_rect(const sx_rect rc)
-{
-    ImGuizmo_SetRect(rc.xmin, rc.ymin, rc.xmax - rc.xmin, rc.ymax - rc.ymin);
-}
-
-static void imgui__gizmo_decompose_mat4(const sx_mat4* mat, sx_vec3* translation, sx_vec3* rotation,
-                                        sx_vec3* scale)
-{
-    sx_mat4 transpose = sx_mat4_transpose(mat);
-    ImGuizmo_DecomposeMatrixToComponents(transpose.f, translation->f, rotation->f, scale->f);
-}
-
-static void imgui__gizmo_compose_mat4(sx_mat4* mat, const sx_vec3 translation,
-                                      const sx_vec3 rotation, const sx_vec3 scale)
-{
-    ImGuizmo_RecomposeMatrixFromComponents(translation.f, rotation.f, scale.f, mat->f);
-    sx_mat4_transpose(mat);
-}
-
-static inline void imgui__mat4_to_gizmo(float dest[16], const sx_mat4* src)
-{
-    dest[0] = src->m11;
-    dest[1] = src->m21;
-    dest[2] = src->m31;
-    dest[3] = src->m41;
-    dest[4] = src->m12;
-    dest[5] = src->m22;
-    dest[6] = src->m32;
-    dest[7] = src->m42;
-    dest[8] = src->m13;
-    dest[9] = src->m23;
-    dest[10] = src->m33;
-    dest[11] = src->m43;
-    dest[12] = src->m14;
-    dest[13] = src->m24;
-    dest[14] = src->m34;
-    dest[15] = src->m44;
-}
-
-static inline sx_mat4 imgui__mat4_from_gizmo(const float src[16])
-{
-    //    return sx_mat4f(src[0], src[1], src[2], src[3], src[4], src[5], src[6], src[7], src[8],
-    //    src[9],
-    //                    src[10], src[11], src[12], src[13], src[14], src[15]);
-    return sx_mat4v(
-        sx_vec4f(src[0], src[1], src[2], src[3]), sx_vec4f(src[4], src[5], src[6], src[7]),
-        sx_vec4f(src[8], src[9], src[10], src[11]), sx_vec4f(src[12], src[13], src[14], src[15]));
-}
-
-static void imgui__gizmo_translate(sx_mat4* mat, const sx_mat4* view, const sx_mat4* proj,
-                                   gizmo_mode mode, sx_mat4* delta_mat, sx_vec3* snap)
-{
-    float _mat[16];
-    float tview[16];
-    float tproj[16];
-    float _delta[16];
-    imgui__mat4_to_gizmo(_mat, mat);
-    imgui__mat4_to_gizmo(tview, view);
-    imgui__mat4_to_gizmo(tproj, proj);
-    ImGuizmo_Manipulate(tview, tproj, TRANSLATE, (enum MODE)mode, _mat, delta_mat ? _delta : NULL,
-                        snap ? snap->f : NULL, NULL, NULL);
-    if (delta_mat)
-        *delta_mat = imgui__mat4_from_gizmo(_delta);
-    *mat = imgui__mat4_from_gizmo(_mat);
-}
-
-static void imgui__gizmo_rotation(sx_mat4* mat, const sx_mat4* view, const sx_mat4* proj,
-                                  gizmo_mode mode, sx_mat4* delta_mat, float* snap)
-{
-    float _mat[16];
-    float tview[16];
-    float tproj[16];
-    float _delta[16];
-    imgui__mat4_to_gizmo(_mat, mat);
-    imgui__mat4_to_gizmo(tview, view);
-    imgui__mat4_to_gizmo(tproj, proj);
-    ImGuizmo_Manipulate(tview, tproj, ROTATE, (enum MODE)mode, _mat, delta_mat ? _delta : NULL,
-                        snap, NULL, NULL);
-    if (delta_mat)
-        *delta_mat = imgui__mat4_from_gizmo(_delta);
-    *mat = imgui__mat4_from_gizmo(_mat);
-}
-
-static void imgui__gizmo_scale(sx_mat4* mat, const sx_mat4* view, const sx_mat4* proj,
-                               gizmo_mode mode, sx_mat4* delta_mat, float* snap)
-{
-    float _mat[16];
-    float tview[16];
-    float tproj[16];
-    float _delta[16];
-    imgui__mat4_to_gizmo(_mat, mat);
-    imgui__mat4_to_gizmo(tview, view);
-    imgui__mat4_to_gizmo(tproj, proj);
-    ImGuizmo_Manipulate(tview, tproj, SCALE, (enum MODE)mode, _mat, delta_mat ? _delta : NULL, snap,
-                        NULL, NULL);
-    if (delta_mat)
-        *delta_mat = imgui__mat4_from_gizmo(_delta);
-    *mat = imgui__mat4_from_gizmo(_mat);
-}
-
 ////////////////////////////////////////////////////////////////////////////////////////////////////
 // memory debugger
 static void imgui__dual_progress_bar(float fraction1, float fraction2, const sx_vec2 ctrl_size,
@@ -1543,12 +1576,38 @@ static void imgui__dual_progress_bar(float fraction1, float fraction2, const sx_
 static void imgui__graphics_debugger(const rizz_gfx_trace_info* info, bool* p_open)
 {
     sx_assert(info);
-    the__imgui.SetNextWindowSizeConstraints(sx_vec2f(400.0f, 300.0f), sx_vec2f(FLT_MAX, FLT_MAX),
+    the__imgui.SetNextWindowSizeConstraints(sx_vec2f(500.0f, 350.0f), sx_vec2f(FLT_MAX, FLT_MAX),
                                             NULL, NULL);
+
+    float ft = the_core->delta_time()*1000.0f;
+
+    g_imgui.fts[g_imgui.ft_iter] = ft;
+    g_imgui.ft_iter = (g_imgui.ft_iter + 1) % MAX_BUFFERED_FRAME_TIMES;
+    ++g_imgui.ft_iter_nomod;
+    float fts[MAX_BUFFERED_FRAME_TIMES];
+    int ft_count;
+    if (g_imgui.ft_iter_nomod > g_imgui.ft_iter) {
+        sx_memcpy(fts, &g_imgui.fts[g_imgui.ft_iter], sizeof(float)*(MAX_BUFFERED_FRAME_TIMES - g_imgui.ft_iter));
+        sx_memcpy(&fts[MAX_BUFFERED_FRAME_TIMES - g_imgui.ft_iter], g_imgui.fts, g_imgui.ft_iter*sizeof(float));
+        ft_count = MAX_BUFFERED_FRAME_TIMES;
+    } else {
+        sx_memcpy(fts, g_imgui.fts, g_imgui.ft_iter*sizeof(float));
+        ft_count = g_imgui.ft_iter;
+    }
+
     if (the__imgui.Begin("Graphics Debugger", p_open, 0)) {
         if (the__imgui.BeginTabBar("#gfx_debugger_tabs", 0)) {
             if (the__imgui.BeginTabItem("General", NULL, 0)) {
                 const rizz_gfx_perframe_trace_info* pf = &info->pf[RIZZ_GFX_TRACE_COMMON];
+                the__imgui.LabelText("Fps", "%.1f", the_core->fps());
+                the__imgui.LabelText("Fps (mean)", "%.1f", the_core->fps_mean());
+                the__imgui.LabelText("FrameTime (ms)", "%.1f", ft);
+
+                the__imgui.PushItemWidth(-1);
+                the__imgui.PlotHistogramFloatPtr("##Ft_plot", fts, ft_count, 0, NULL, 0, 32.0f, 
+                                                 sx_vec2f(0, 50.0f), sizeof(float));
+                the__imgui.PopItemWidth();
+
                 the__imgui.LabelText("Draws", "%d", pf->num_draws);
                 the__imgui.LabelText("Instances", "%d", pf->num_instances);
                 the__imgui.LabelText("Elements", "%d", pf->num_elements);
@@ -1811,18 +1870,7 @@ static rizz_api_imgui_extra the__imgui_extra = {
     .draw_cursor = imgui__draw_cursor,
     .project_to_screen = imgui__project_to_screen,
     .is_capturing_mouse = imgui__is_capturing_mouse,
-    .is_capturing_keyboard = imgui__is_capturing_keyboard,
-    .gizmo_hover = ImGuizmo_IsOver,
-    .gizmo_using = ImGuizmo_IsUsing,
-    .gizmo_set_current_window = ImGuizmo_SetDrawlist,
-    .gizmo_set_ortho = ImGuizmo_SetOrthographic,
-    .gizmo_enable = ImGuizmo_Enable,
-    .gizmo_set_rect = imgui__gizmo_set_rect,
-    .gizmo_decompose_mat4 = imgui__gizmo_decompose_mat4,
-    .gizmo_compose_mat4 = imgui__gizmo_compose_mat4,
-    .gizmo_translate = imgui__gizmo_translate,
-    .gizmo_rotation = imgui__gizmo_rotation,
-    .gizmo_scale = imgui__gizmo_scale
+    .is_capturing_keyboard = imgui__is_capturing_keyboard
 };
 
 rizz_plugin_decl_event_handler(imgui, e)
@@ -1873,7 +1921,7 @@ rizz_plugin_decl_event_handler(imgui, e)
         break;
     case RIZZ_APP_EVENTTYPE_RESIZED:
         io->DisplaySize = the_app->sizef();
-        ImGuizmo_SetRect(0, 0, io->DisplaySize.x, io->DisplaySize.y);
+        imgui__imguizmo_setrect(0, 0, io->DisplaySize.x, io->DisplaySize.y);
         break;
     default:
         break;
@@ -1936,7 +1984,7 @@ static void imgui__submit_make_commands(const void* cmdbuff, int cmdbuff_sz)
             _sg_imgui_make_pass(&desc, pass, &g_imgui.sg_imgui);
         } break;
         default:
-            assert(0);
+            sx_assert(0);
         }
     }
 }
@@ -1960,6 +2008,7 @@ rizz_plugin_decl_main(imgui, plugin, e)
         }
 
         sx_assert(the_plugin);
+        imgui__get_imguizmo_api(&the__imgui_extra.gizmo);
         the_plugin->inject_api("imgui", 0, &the__imgui);
         the_plugin->inject_api("imgui_extra", 0, &the__imgui_extra);
 
@@ -1974,13 +2023,14 @@ rizz_plugin_decl_main(imgui, plugin, e)
             imgui__submit_make_commands(make_cmdbuff, make_cmdbuff_sz);
         }
 
-        imgui__log_init(the_core, g_sg_imgui_alloc, 64*1024);
+        imgui__log_init(the_core, the_app, g_sg_imgui_alloc, 64*1024);
         break;
     }
 
     case RIZZ_PLUGIN_EVENT_LOAD: {
         the__imgui.SetCurrentContext(g_imgui.ctx);
         the__imgui.SetAllocatorFunctions(imgui__malloc, imgui__free, (void*)g_sg_imgui_alloc);
+        imgui__get_imguizmo_api(&the__imgui_extra.gizmo);
         the_plugin->inject_api("imgui", 0, &the__imgui);
         the_plugin->inject_api("imgui_extra", 0, &the__imgui_extra);
         break;
@@ -2002,4 +2052,4 @@ rizz_plugin_decl_main(imgui, plugin, e)
     return 0;
 }
 
-rizz_plugin_implement_info(imgui, 1770, "dear-imgui plugin", NULL, 0);
+rizz_plugin_implement_info(imgui, 1790, "dear-imgui plugin", NULL, 0);

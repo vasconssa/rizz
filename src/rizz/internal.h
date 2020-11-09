@@ -64,7 +64,6 @@ void rizz__vfs_release();
 void rizz__vfs_async_update();
 
 bool rizz__asset_init(const sx_alloc* alloc, const char* dbfile, const char* variation);
-bool rizz__asset_save_meta_cache();
 bool rizz__asset_dump_unused(const char* filepath);
 void rizz__asset_release();
 void rizz__asset_update();
@@ -75,18 +74,6 @@ void rizz__gfx_trace_reset_frame_stats(rizz_gfx_perframe_trace_zone zone);
 void rizz__gfx_execute_command_buffers_final();
 void rizz__gfx_update();
 void rizz__gfx_commit_gpu();
-
-bool rizz__refl_init(const sx_alloc* alloc, int max_regs sx_default(0));
-void rizz__refl_release();
-
-// clang-format off
-#define rizz__refl_enum(_type, _name)                    \
-        the__refl._reg(RIZZ_REFL_ENUM, (void*)(intptr_t)_name, #_type, #_name, NULL, "", sizeof(_type), 0)
-#define rizz__refl_func(_type, _name, _desc)             \
-        the__refl._reg(RIZZ_REFL_FUNC, &_name, #_type, #_name, NULL, _desc, sizeof(void*), 0)
-#define rizz__refl_field(_struct, _type, _name, _desc)   \
-        the__refl._reg(RIZZ_REFL_FIELD, &(((_struct*)0)->_name), #_type, #_name, #_struct, _desc, sizeof(_type), sizeof(_struct))
-// clang-format on
 
 bool rizz__http_init(const sx_alloc* alloc);
 void rizz__http_release();

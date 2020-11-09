@@ -5,7 +5,6 @@
 #include "rizz/imgui-extra.h"
 #include "rizz/imgui.h"
 #include "rizz/rizz.h"
-#include "rizz/util.h"
 
 #include "../common.h"
 
@@ -192,7 +191,7 @@ static void update(float dt)
     // loop
     if (t >= 1.0f) {
         g_sdf.tween.tm = 0;
-        g_sdf.shape_f1 = sx_rng_gen_rangei(&g_sdf.rng, 5, 10);
+        g_sdf.shape_f1 = (float)sx_rng_gen_rangei(&g_sdf.rng, 5, 10);
         g_sdf.shape_f2 = g_sdf.shape_f1 + 1.0f + sx_rng_genf(&g_sdf.rng) * (g_sdf.shape_f1 - 1.0f);
     }
 
@@ -248,7 +247,7 @@ static void render()
         sx_mat4 rot = sx_mat4_rotateX(SX_PIHALF);
         sx_mat4 translate = sx_mat4_translate(0, 0.0f, 2.0f);
         sx_mat4 mat = sx_mat4_mul(&translate, &rot);
-        fs_vars.shape_mat = sx_mat4x_inv(&mat);
+        fs_vars.shape_mat = sx_mat4_inv_transform(&mat);
     }
 
     // draw quad
@@ -270,7 +269,7 @@ rizz_plugin_decl_main(sdf, plugin, e)
 {
     switch (e) {
     case RIZZ_PLUGIN_EVENT_STEP:
-        update((float)sx_tm_sec(the_core->delta_tick()));
+        update(the_core->delta_time());
         render();
         break;
 

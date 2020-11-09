@@ -8,8 +8,11 @@
 RIZZ_STATE static rizz_api_plugin* the_plugin;
 
 static rizz_api_prims3d the__prims3d = {
+    .set_draw_api = prims3d__set_draw_api,
     .draw_box = prims3d__draw_box,
     .draw_boxes = prims3d__draw_boxes,
+    .draw_sphere = prims3d__draw_sphere,
+    .draw_spheres = prims3d__draw_spheres,
     .generate_box_geometry = prims3d__generate_box_geometry,
     .free_geometry = prims3d__free_geometry,
     .draw_aabb = prims3d__draw_aabb,
@@ -72,7 +75,7 @@ rizz_plugin_decl_main(3dtools, plugin, e)
     return 0;
 }
 
-rizz_plugin_decl_event_handler(2dtools, e) 
+rizz_plugin_decl_event_handler(3dtools, e) 
 {
     if (e->type == RIZZ_APP_EVENTTYPE_UPDATE_APIS) {
         rizz_api_imgui* imgui = the_plugin->get_api_byname("imgui", 0);

@@ -124,7 +124,7 @@ typedef struct cj5_token {
     int start;
     int end;
     int size;
-    int parent_id;
+    int parent_id;      // = -1 if there is no parent
 } cj5_token;
 
 typedef struct cj5_result {
@@ -947,7 +947,7 @@ bool cj5_get_bool(cj5_result* r, int id)
     if (fourcc == CJ5__TRUE_FOURCC) {
         return true;
     } else if (fourcc == CJ5__FALSE_FOURCC) {
-        return true;
+        return false;
     } else {
         CJ5_ASSERT(0 && "invalid bool value");
         return false;

@@ -11,6 +11,7 @@ layout (location = TEXCOORD5) in vec4 a_inst_color;
 
 layout (location = TEXCOORD0) out vec2 f_uv;
 layout (location = TEXCOORD1) flat out vec4 f_color;
+layout (location = TEXCOORD2) out vec3 f_normal;
 
 #define a_inst_pos a_inst_tx1.xyz
 #define a_inst_rot mat3(vec3(a_inst_tx1.w, a_inst_tx2.x, a_inst_tx2.y), \
@@ -31,15 +32,20 @@ void main()
     vec3 normal = abs(a_normal);
     const float e = 0.00001;
     
-    vec2 uv = a_uv;
-    if (normal.x > e) {
-        uv *= a_inst_scale.yz;
-    } else if (normal.y > e) {
-        uv *= a_inst_scale.xz;
-    } else if (normal.z > e) {
-        uv *= a_inst_scale.xy;
-    }
+    #ifdef BOX_UV_WORKAROUND
+        vec2 uv = a_uv;
+        if (normal.x > e) {
+            uv *= a_inst_scale.yz;
+        } else if (normal.y > e) {
+            uv *= a_inst_scale.xz;
+        } else if (normal.z > e) {
+            uv *= a_inst_scale.xy;
+        }
+        f_uv = uv;
+    #else
+        f_uv = a_uv;
+    #endif
 
-    f_uv = uv;
     f_color = a_inst_color;
+    f_normal = a_normal;
 }

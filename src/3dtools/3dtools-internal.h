@@ -13,7 +13,14 @@ void prims3d__draw_box(const sx_box* box, const sx_mat4* viewproj_mat, rizz_prim
                      sx_color tint);
 void prims3d__draw_boxes(const sx_box* boxes, int num_boxes, const sx_mat4* viewproj_mat,
                          rizz_prims3d_map_type map_type, const sx_color* tints);
-bool prims3d__generate_box_geometry(const sx_alloc* alloc, rizz_prims3d_geometry* geo);
+void prims3d__draw_sphere(sx_vec3 center, float radius, const sx_mat4* viewproj_mat,
+                          rizz_prims3d_map_type map_type, sx_color tint);
+void prims3d__draw_spheres(const sx_vec3* centers, const float* radiuss, int count, 
+                           const sx_mat4* viewproj_mat, rizz_prims3d_map_type map_type, 
+                           const sx_color* tints);                     
+bool prims3d__generate_box_geometry(const sx_alloc* alloc, rizz_prims3d_geometry* geo, sx_vec3 extents);
+bool prims3d__generate_sphere_geometry(const sx_alloc* alloc, rizz_prims3d_geometry* geo,
+                                       float radius, int num_segments, int num_rings);
 void prims3d__free_geometry(rizz_prims3d_geometry* geo, const sx_alloc* alloc);
 
 void prims3d__grid_xzplane(float spacing, float spacing_bold, const sx_mat4* vp, const sx_vec3 frustum[8]);
@@ -27,6 +34,7 @@ void prims3d__draw_aabbs(const sx_aabb* aabbs, int num_aabbs, const sx_mat4* vie
 void prims3d__draw_path(const sx_vec3* points, int num_points, const sx_mat4* viewproj_mat, const sx_color color);
 void prims3d__draw_line(const sx_vec3 p0, const sx_vec3 p1, const sx_mat4* viewproj_mat, const sx_color color);
 
+void prims3d__set_draw_api(rizz_api_gfx_draw* draw_api);
 void prims3d__set_max_instances(int max_instances);
 void prims3d__set_max_vertices(int max_verts);
 void prims3d__set_max_indices(int max_indices);

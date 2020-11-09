@@ -59,3 +59,22 @@ Demonstrates basic application setup. Just clears the view with blue color.
 - Debug Cube drawing
 
 ![08-draw3d](screenshots/08-draw3d.png)
+
+### [PathFind](09-pathfind/pathfind.c)
+- Basic A* path finding 
+- Path priorities/Agents with different cell weights
+
+![09-pathfind](screenshots/09-pathfind.png)
+
+### [CollideBoxes](10-collideboxes/collideboxes.c)
+- Basic collision detection between 2k boxes (OBB)
+- Ray casting 
+- Debug visualizations for collision and raycast
+
+![10-collideboxes](screenshots/10-collideboxes.png)
+
+### [PathSpline](11-pathspline/pathspline.c)
+- Demonstrate the _spline_ API presented by _utility_ plugin
+- Camera movement along path
+
+![11-pathspline](screenshots/11-pathspline.png)

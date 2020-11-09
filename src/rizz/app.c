@@ -10,8 +10,13 @@
 #include "sx/cmdline.h"
 #include "sx/os.h"
 #include "sx/string.h"
+#include "sx/array.h"
 
 #include <stdio.h>
+
+#if SX_COMPILER_CLANG  
+#include <assert.h>  // static_assert ?! 
+#endif
 
 #include "Remotery.h"
 
@@ -34,12 +39,31 @@
 #    include "plugin_bundle.h"
 #endif
 
-typedef struct {
+typedef struct rizz__cmdline_item {
+    char name[64];
+    bool allocated_value;
+    union {
+        char  value[8];
+        char* value_ptr;
+    };
+} rizz__cmdline_item;
+
+typedef struct rizz__shortcut_item {
+    rizz_keycode keys[2];       // maximum 2 keys are allowed
+    rizz_modifier_keys mods;    // with any combination of modifier keys
+    rizz_app_shortcut_cb* callback;
+    void* user;
+} rizz__shortcut_item;
+
+typedef struct rizz__app {
     rizz_config conf;
     const sx_alloc* alloc;
     char game_filepath[RIZZ_MAX_PATH];
     sx_vec2 window_size;
     bool keys_pressed[RIZZ_APP_MAX_KEYCODES];
+    sx_cmdline_opt* cmdline_args;       // sx_array
+    rizz__cmdline_item* cmdline_items;  // saved items with values
+    rizz__shortcut_item* shortcuts;     // sx_array;
 } rizz__app;
 
 static rizz__app g_app;
@@ -82,11 +106,25 @@ SX_PRAGMA_DIAGNOSTIC_POP();
     }
 
 #ifdef RIZZ_BUNDLE
-RIZZ_PLUGIN_EXPORT void rizz_game_config(rizz_config*, int argc, char* argv[]);
+RIZZ_PLUGIN_EXPORT void rizz_game_config(rizz_config*, rizz_register_cmdline_arg_cb*);
+#endif
+
+#if SX_PLATFORM_WINDOWS
+static void rizz__app_message_box(const char* text)
+{
+    MessageBoxA(NULL, text, "rizz", MB_OK|MB_ICONERROR);
+}
+#else
+static void rizz__app_message_box(const char* text)
+{
+    puts(text);
+}
 #endif
 
 static void rizz__app_init(void)
 {
+    char errmsg[512];
+
 #if SX_PLATFORM_ANDROID
     static char default_cache_path[512];
     sx_strcpy(default_cache_path, sizeof(default_cache_path), rizz_android_cache_dir());
@@ -111,6 +149,7 @@ static void rizz__app_init(void)
     // Initialize engine components
     if (!rizz__core_init(&g_app.conf)) {
         rizz__log_error("core init failed");
+        rizz__app_message_box("core init failed, see log for details");
         exit(-1);
     }
 
@@ -129,12 +168,16 @@ static void rizz__app_init(void)
     // add game
 #ifndef RIZZ_BUNDLE
     if (!rizz__plugin_load_abs(g_app.game_filepath, true, g_app.conf.plugins, num_plugins)) {
-        rizz__log_error("loading game plugin failed: %s", g_app.game_filepath);
+        sx_snprintf(errmsg, sizeof(errmsg), g_app.game_filepath);
+        rizz__log_error(errmsg);
+        rizz__app_message_box(errmsg);
         exit(-1);
     }
 #else
     if (!rizz__plugin_load_abs(ENTRY_NAME, true, g_app.conf.plugins, num_plugins)) {
-        rizz__log_error("loading game plugin failed: %s", g_app.game_filepath);
+        sx_snprintf(errmsg, sizeof(errmsg), g_app.game_filepath);
+        rizz__log_error(errmsg);
+        rizz__app_message_box(errmsg);
         exit(-1);
     }
 #endif
@@ -142,6 +185,7 @@ static void rizz__app_init(void)
     // initialize all plugins
     if (!rizz__plugin_init_plugins()) {
         rizz__log_error("initializing plugins failed");
+        rizz__app_message_box("initializing plugins failed, see log for details");
         exit(-1);
     }
 
@@ -159,6 +203,27 @@ static void rizz__app_frame(void)
 static void rizz__app_cleanup(void)
 {
     rizz__core_release();
+
+    for (int i = 0; i < sx_array_count(g_app.cmdline_items); i++) {
+        if (g_app.cmdline_items[i].allocated_value) {
+            sx_free(g_app.alloc, g_app.cmdline_items[i].value_ptr);
+        }
+    }
+    sx_array_free(g_app.alloc, g_app.cmdline_items);
+}
+
+static void rizz__app_process_shortcuts(rizz_modifier_keys input_mods)
+{
+    for (int i = 0, c = sx_array_count(g_app.shortcuts); i < c; i++) {
+        rizz_keycode key1 = g_app.shortcuts[i].keys[0];
+        rizz_keycode key2 = g_app.shortcuts[i].keys[1];
+        rizz_modifier_keys keymods = g_app.shortcuts[i].mods;
+
+        if (g_app.keys_pressed[key1] && (key2 == SAPP_KEYCODE_INVALID || g_app.keys_pressed[key2]) &&
+            (keymods == 0 || (keymods & input_mods))) {
+            g_app.shortcuts[i].callback(g_app.shortcuts[i].user);
+        } 
+    }
 }
 
 static void rizz__app_event(const sapp_event* e)
@@ -185,6 +250,7 @@ static void rizz__app_event(const sapp_event* e)
         break;
     case RIZZ_APP_EVENTTYPE_KEY_DOWN:
         g_app.keys_pressed[e->key_code] = true;
+        rizz__app_process_shortcuts(e->modifiers);
         break;
     case RIZZ_APP_EVENTTYPE_KEY_UP:
         g_app.keys_pressed[e->key_code] = false;
@@ -209,6 +275,113 @@ static void rizz__app_show_help(sx_cmdline_context* cmdline)
     puts(buff);
 }
 
+static void rizz__app_write_help_tofile(const char* filename, sx_cmdline_context* cmdline, sx_cmdline_context* cmdline_app)
+{
+    char buff[4096];
+    sx_cmdline_create_help_string(cmdline, buff, sizeof(buff));
+    
+    FILE* f = fopen(filename, "wt");
+    if (f) {
+        if (cmdline) {
+            sx_cmdline_create_help_string(cmdline, buff, sizeof(buff));
+            fputs(buff, f);
+            fputs("", f);
+        }
+
+        if (cmdline_app) {
+            sx_cmdline_create_help_string(cmdline_app, buff, sizeof(buff));
+            fputs(buff, f);
+            fputs("", f);
+        }
+        fclose(f);
+    }
+}
+
+
+static sx_cmdline_context* rizz__app_parse_cmdline(int argc, char* argv[])
+{
+    sx_cmdline_opt end_opt = SX_CMDLINE_OPT_END;
+    sx_array_push(g_app.alloc, g_app.cmdline_args, end_opt);
+    sx_cmdline_context* cmdline = sx_cmdline_create_context(g_app.alloc, argc, (const char**)argv, g_app.cmdline_args);
+
+    int opt;
+    int index;
+    const char* arg;
+    int count = sx_array_count(g_app.cmdline_args)-1;
+    while ((opt = sx_cmdline_next(cmdline, &index, &arg)) != -1) {
+        for (int i = 0; i < count; i++) {
+            // detect short or long name
+            if (argv[index][0] == '-' && argv[index][1] == '-') {
+                const char* eq = sx_strchar(argv[index], '=');
+                if (eq) {
+                    char _arg[64];
+                    sx_strncpy(_arg, sizeof(_arg), &argv[index][2], (int)(uintptr_t)(eq - &argv[index][2]));
+                    if (!sx_strequal(g_app.cmdline_args[i].name, _arg)) {
+                        continue;
+                    }
+                } else if (!sx_strequal(g_app.cmdline_args[i].name, &argv[index][2])) {
+                    continue;
+                }
+            } else if (argv[index][0] == '-') {
+                if (g_app.cmdline_args[i].name_short != argv[index][2]) {
+                    continue;
+                }
+            } else {
+                continue;
+            }
+
+            rizz__cmdline_item item;
+            sx_strcpy(item.name, sizeof(item.name), g_app.cmdline_args[i].name);
+
+            if (arg) {
+                int arg_len = sx_strlen(arg);
+                if (arg_len > (int)sizeof(item.value) - 1) {
+                    item.allocated_value = false;
+                    sx_strcpy(item.value, sizeof(item.value), arg);
+                } else {
+                    item.allocated_value = true;
+                    item.value_ptr = sx_malloc(g_app.alloc, arg_len + 1);
+                    if (!item.value_ptr) {
+                        sx_memory_fail();
+                    } else {
+                        sx_strcpy(item.value_ptr, arg_len + 1, arg);
+                    }
+                }
+            } else {
+                item.allocated_value = false;
+                sx_snprintf(item.value, sizeof(item.value), "%d", opt);
+            }
+             
+            sx_array_push(g_app.alloc, g_app.cmdline_items, item);
+            break;
+        }
+    }
+
+    return cmdline;
+}
+
+static void rizz__app_cmdline_arg(const char* name, char short_name, rizz_cmdline_argtype type,
+                                  const char* desc, const char* value_desc)
+{
+    for (int i = 0; i < sx_array_count(g_app.cmdline_items); i++) {
+        sx_cmdline_opt* opt = &g_app.cmdline_args[i];
+        if (sx_strequal(opt->name, name)) {
+            sx_assertf(0, "command-line argument '%s' is already registered", name);
+            return;
+        }
+    }
+
+    sx_cmdline_opt opt = (sx_cmdline_opt){ .name = name,
+                                           .name_short = (int)short_name,
+                                           .type = (sx_cmdline_optype)type,
+                                           .value = 1,
+                                           .desc = desc,
+                                           .value_desc = value_desc };
+
+    sx_array_push(g_app.alloc, g_app.cmdline_args, opt);
+}
+
+
 // Program's main entry point
 sapp_desc sokol_main(int argc, char* argv[])
 {
@@ -216,7 +389,6 @@ sapp_desc sokol_main(int argc, char* argv[])
 
     int profile_gpu = 0, dump_unused_assets = 0;
 
-#ifndef RIZZ_BUNDLE
     int version = 0, show_help = 0;
     const sx_cmdline_opt opts[] = {
         { "version", 'V', SX_CMDLINE_OPTYPE_FLAG_SET, &version, 1, "Print version", 0x0 },
@@ -227,25 +399,23 @@ sapp_desc sokol_main(int argc, char* argv[])
         { "help", 'h', SX_CMDLINE_OPTYPE_FLAG_SET, &show_help, 1, "Show this help message", 0x0 },
         SX_CMDLINE_OPT_END
     };
-    sx_cmdline_context* cmdline =
-        sx_cmdline_create_context(g_app.alloc, argc, (const char**)argv, opts);
+    sx_cmdline_context* cmdline = sx_cmdline_create_context(g_app.alloc, argc, (const char**)argv, opts);
 
     int opt;
     const char* arg;
     const char* game_filepath = NULL;
     const char* cwd = NULL;
+    char errmsg[512];
 
     while ((opt = sx_cmdline_next(cmdline, NULL, &arg)) != -1) {
         switch (opt) {
         case '+':
-            printf("Got argument without flag: %s\n", arg);
-            break;
-        case '?':
-            printf("Unknown argument: %s\n", arg);
-            exit(-1);
+            sx_snprintf(errmsg, sizeof(errmsg), "Got argument without flag: %s", arg);
+            rizz__app_message_box(errmsg);
             break;
         case '!':
-            printf("Invalid use of argument: %s\n", arg);
+            sx_snprintf(errmsg, sizeof(errmsg), "Invalid use of argument: %s", arg);
+            rizz__app_message_box(errmsg);
             exit(-1);
             break;
         case 'r':
@@ -259,34 +429,33 @@ sapp_desc sokol_main(int argc, char* argv[])
         }
     }
 
-    if (show_help) {
-        rizz__app_show_help(cmdline);
-        exit(0);
-    }
-
+#ifndef RIZZ_BUNDLE
     if (game_filepath == NULL) {
-        puts("provide a game module to run (--run)");
+        rizz__app_message_box("provide a game module to run (--run)");
         exit(-1);
     }
     if (!sx_os_path_isfile(game_filepath)) {
-        printf("Game module '%s' does not exist\n", game_filepath);
+        sx_snprintf(errmsg, sizeof(errmsg), "Game module '%s' does not exist", game_filepath);
+        rizz__app_message_box(errmsg);
         exit(-1);
     }
 
     void* game_dll = sx_os_dlopen(game_filepath);
     if (game_dll == NULL) {
-        printf("Game module '%s' is not a valid DLL: %s\n", game_filepath, sx_os_dlerr());
+        sx_snprintf(errmsg, sizeof(errmsg),
+                    "Game module '%s' is not a valid DLL: %s", game_filepath, sx_os_dlerr());
+        rizz__app_message_box(errmsg);
         exit(-1);
     }
 
-    rizz_game_config_cb* game_config_fn =
-        (rizz_game_config_cb*)sx_os_dlsym(game_dll, "rizz_game_config");
+    rizz_game_config_cb* game_config_fn = (rizz_game_config_cb*)sx_os_dlsym(game_dll, "rizz_game_config");
     if (!game_config_fn) {
-        printf("Symbol 'rizz_game_config' not found in game module: %s\n", game_filepath);
+        sx_snprintf(errmsg, sizeof(errmsg), "Symbol 'rizz_game_config' not found in game module: %s", game_filepath);
+        rizz__app_message_box(errmsg);
         exit(-1);
     }
 #else
-    const char* game_filepath = argc > 0 ? argv[0] : "";
+    game_filepath = argc > 0 ? argv[0] : "";
     rizz_game_config_cb* game_config_fn = rizz_game_config;
 #endif    // RIZZ_BUNDLE
 
@@ -342,11 +511,34 @@ sapp_desc sokol_main(int argc, char* argv[])
     conf.core_flags |= RIZZ_CORE_FLAG_DETECT_LEAKS;
 #endif
 
-    game_config_fn(&conf, argc, argv);
+    game_config_fn(&conf, rizz__app_cmdline_arg);
+
+    // command-line arguments must be registered to this point
+    // parse them and save them for future use
+    sx_cmdline_context* cmdline_app = rizz__app_parse_cmdline(argc, argv);
+    if (show_help) {
+        puts("rizz (engine) arguments:");
+        rizz__app_show_help(cmdline);
+        
+        if (cmdline_app && sx_array_count(g_app.cmdline_args) > 1) {
+            puts("app arguments:");
+            rizz__app_show_help(cmdline_app);
+        }
+
+        // write to file
+        rizz__app_write_help_tofile("rizz_args.txt", cmdline, 
+                                    sx_array_count(g_app.cmdline_args) > 1 ? cmdline_app : NULL);
+    }
+
+    if (cmdline_app) {
+        sx_cmdline_destroy_context(cmdline_app, g_app.alloc);
+    }
+    sx_array_free(g_app.alloc, g_app.cmdline_args);
 
     // create .cache directory if it doesn't exist
-    if (!conf.cache_path && !sx_os_path_isdir(default_cache_path))
+    if (!conf.cache_path && !sx_os_path_isdir(default_cache_path)) {
         sx_os_mkdir(default_cache_path);
+    }
 
     // Before closing the dll, save the strings into static variables
     rizz__app_save_config_str(default_name, conf.app_name);
@@ -370,25 +562,26 @@ sapp_desc sokol_main(int argc, char* argv[])
     sx_strcpy(g_app.game_filepath, sizeof(g_app.game_filepath), game_filepath);
     g_app.window_size = sx_vec2f((float)conf.window_width, (float)conf.window_height);
 
-    return (
-        sapp_desc){ .init_cb = rizz__app_init,
-                    .frame_cb = rizz__app_frame,
-                    .cleanup_cb = rizz__app_cleanup,
-                    .event_cb = rizz__app_event,
-                    .fail_cb = rizz__app_fail,
-                    .width = conf.window_width,
-                    .height = conf.window_height,
-                    .sample_count = conf.multisample_count,
-                    .window_title = conf.app_title,
-                    .swap_interval = conf.swap_interval,
-                    .high_dpi = (conf.app_flags & RIZZ_APP_FLAG_HIGHDPI) ? true : false,
-                    .fullscreen = (conf.app_flags & RIZZ_APP_FLAG_FULLSCREEN) ? true : false,
-                    .alpha = (conf.app_flags & RIZZ_APP_FLAG_ALPHA) ? true : false,
-                    .html5_canvas_name = conf.html5_canvas_name,
-                    .ios_keyboard_resizes_canvas =
-                        (conf.app_flags & RIZZ_APP_FLAG_IOS_KEYBOARD_RESIZES_CANVAS) ? true : false,
-                    .user_cursor = (conf.app_flags & RIZZ_APP_FLAG_USER_CURSOR) ? true : false,
-                    .gl_force_gles2 = (conf.app_flags & RIZZ_APP_FLAG_FORCE_GLES2) ? true : false };
+    return (sapp_desc) {
+        .init_cb = rizz__app_init,
+        .frame_cb = rizz__app_frame,
+        .cleanup_cb = rizz__app_cleanup,
+        .event_cb = rizz__app_event,
+        .fail_cb = rizz__app_fail,
+        .width = conf.window_width,
+        .height = conf.window_height,
+        .sample_count = conf.multisample_count,
+        .window_title = conf.app_title,
+        .swap_interval = conf.swap_interval,
+        .high_dpi = (conf.app_flags & RIZZ_APP_FLAG_HIGHDPI) ? true : false,
+        .fullscreen = (conf.app_flags & RIZZ_APP_FLAG_FULLSCREEN) ? true : false,
+        .alpha = (conf.app_flags & RIZZ_APP_FLAG_ALPHA) ? true : false,
+        .html5_canvas_name = conf.html5_canvas_name,
+        .ios_keyboard_resizes_canvas = (conf.app_flags & RIZZ_APP_FLAG_IOS_KEYBOARD_RESIZES_CANVAS) ? true : false,
+        .user_cursor = (conf.app_flags & RIZZ_APP_FLAG_USER_CURSOR) ? true : false,
+        .gl_force_gles2 = (conf.app_flags & RIZZ_APP_FLAG_FORCE_GLES2) ? true : false,
+        .enable_clipboard = (!RIZZ_FINAL && SX_PLATFORM_PC) ? true : false
+    };
 }
 
 static sx_vec2 rizz__app_sizef(void)
@@ -456,11 +649,117 @@ static void rizz__app_mouse_release(void)
 #endif
 }
 
+static const rizz_config* rizz__app_config(void)
+{
+    return &g_app.conf;
+}
+
+static const char* rizz__app_cmdline_arg_value(const char* name)
+{
+    for (int i = 0; i < sx_array_count(g_app.cmdline_items); i++) {
+        rizz__cmdline_item* item = &g_app.cmdline_items[i];
+        if (sx_strequal(item->name, name)) {
+            return item->allocated_value ? item->value_ptr : item->value;
+        }
+    }
+    return NULL;
+}
+
+static bool rizz__app_cmdline_arg_exists(const char* name)
+{
+    for (int i = 0; i < sx_array_count(g_app.cmdline_items); i++) {
+        rizz__cmdline_item* item = &g_app.cmdline_items[i];
+        if (sx_strequal(item->name, name)) {
+            return true;
+        }
+    }
+    return false;
+}
+
+static void rizz__parse_single_shortcut_key(const char* keystr, rizz_keycode keys[2], int* num_keys, rizz_modifier_keys* mods)
+{
+    int len = sx_strlen(keystr);
+    // function keys
+    bool is_fn = (len == 2 || len == 3) && sx_toupperchar(keystr[0]) == 'F' && 
+        ((len == 2 && sx_isnumchar(keystr[1])) || (len == 3 && sx_isnumchar(keystr[1]) && sx_isnumchar(keystr[2])));
+    if (is_fn && *num_keys < 2) {
+        char numstr[3] = {keystr[1], keystr[2], 0};
+        int fnum = sx_toint(numstr) - 1;
+        if (fnum >= 0 && fnum < 25) {
+            keys[(*num_keys)++] = RIZZ_APP_KEYCODE_F1 + fnum;
+        }
+    }
+    else if (len > 1) {
+        char modstr[32];
+        sx_toupper(modstr, sizeof(modstr), keystr);
+        if (sx_strequal(modstr, "ALT")) {
+            *mods |= RIZZ_APP_MODIFIERKEY_ALT;
+        } else if (sx_strequal(modstr, "CTRL")) {
+            *mods |= RIZZ_APP_MODIFIERKEY_CTRL;
+        } else if (sx_strequal(modstr, "SHIFT")) {
+            *mods |= RIZZ_APP_MODIFIERKEY_SHIFT;
+        }
+    } 
+    else if (len == 1 && *num_keys < 2) {
+        char key = sx_toupperchar(keystr[0]);
+        if (keystr[0] > RIZZ_APP_KEYCODE_SPACE) {
+            keys[(*num_keys)++] = (rizz_keycode)key;
+        }
+    }
+}
+
+// shortcut string example:
+// "key1+key2+mod1+mod2+.."
+// "K+SHIFT+CTRL"
+static void rizz__parse_shortcut_string(const char* shortcut, rizz_keycode keys[2], rizz_modifier_keys* mods)
+{
+    shortcut = sx_skip_whitespace(shortcut);
+
+    int num_keys = 0;
+    const char* plus;
+    char keystr[32];
+
+    while (shortcut[0] && (plus = sx_strchar(shortcut, '+'))) {
+        sx_strncpy(keystr, sizeof(keystr), shortcut, (int)(uintptr_t)(plus - shortcut));
+        rizz__parse_single_shortcut_key(keystr, keys, &num_keys, mods);
+        shortcut = sx_skip_whitespace(plus + 1);
+    }
+
+    // read the last one
+    if (shortcut[0]) {
+        sx_strcpy(keystr, sizeof(keystr), shortcut);
+        rizz__parse_single_shortcut_key(keystr, keys, &num_keys, mods);
+    }
+}
+
+static void rizz__register_shortcut(const char* shortcut, rizz_app_shortcut_cb* shortcut_cb, void* user)
+{
+    sx_assert(shortcut_cb);
+
+    rizz_keycode keys[2] = {0, 0};
+    rizz_modifier_keys mods = 0;
+
+    rizz__parse_shortcut_string(shortcut, keys, &mods);
+    sx_assertf(keys[0], "Invalid shortcut string (example: A+CTRL)");
+    if (keys[0]) {
+        rizz__shortcut_item item = {
+            .callback = shortcut_cb,
+            .keys[0] = keys[0],
+            .keys[1] = keys[1],
+            .mods = mods,
+            .user = user
+        };
+        sx_array_push(g_app.alloc, g_app.shortcuts, item);
+    } 
+}
+
+
 rizz_api_app the__app = { .width = sapp_width,
                           .height = sapp_height,
                           .sizef = rizz__app_sizef,
                           .highdpi = sapp_high_dpi,
                           .dpiscale = sapp_dpi_scale,
+                          .config = rizz__app_config,
                           .show_keyboard = sapp_show_keyboard,
                           .keyboard_shown = sapp_keyboard_shown,
                           .name = rizz__app_name,
@@ -471,4 +770,9 @@ rizz_api_app the__app = { .width = sapp_width,
                           .show_mouse = sapp_show_mouse,
                           .mouse_shown = sapp_mouse_shown,
                           .mouse_capture = rizz__app_mouse_capture,
-                          .mouse_release = rizz__app_mouse_release };
+                          .mouse_release = rizz__app_mouse_release,
+                          .cmdline_arg_value = rizz__app_cmdline_arg_value,
+                          .cmdline_arg_exists = rizz__app_cmdline_arg_exists,
+                          .set_clipboard_string = sapp_set_clipboard_string,
+                          .clipboard_string = sapp_get_clipboard_string,
+                          .register_shortcut = rizz__register_shortcut };

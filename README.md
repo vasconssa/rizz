@@ -7,7 +7,7 @@ Rizz (ریز) is a tiny, multi-platform, and minimal game/app development framew
 It's currently a work in progress, features and improvements will be added constantly to different platforms.
 
 ## Design and Basic usage
-For more detailed information about design principles, architecture and basic usage of the framework, please read the document [rizz Architecture and Basic usage](http://glitterbombg.com/blog/posts/rizz-basics/)
+For more detailed information about design principles, architecture and basic usage of the framework, please read the document [rizz Architecture and Basic usage](http://www.glitterbombg.com/blog/posts/rizz-basics), which is also available in [docs/guide](docs/guide)
 
 #### Note
 This is not a game engine, it's a relatively low-level framework for programmers to build their own engine/renderer/physics on top of it. The core of _rizz_ does not and will not implement any rendering techniques/physics or impose any specific entity system to the user. It just provides the basic building blocks for game developers. Other features will be implemented as plugins.
@@ -21,7 +21,7 @@ see [CHANGELOG](CHANGES.md) for latest changes, new features and bug fixes.
 - *Minimal Dependencies*: No external/large dependencies. Only a handful of small dependencies included in the source.
 - *Hot-reloading of C/C++ code*: Plugins/Game code are all hot-reloadable with some restrictions and rules.
 - *Fiber based job system*: Simple to use fiber-based job system.
-- *Reflection*: Provides simple reflection system for _structs_, _enums_ and _functions_.
+- *Reflection*: Provides simple reflection system for _structs_, _enums_ and _functions_ along with built-in _JSON_ serialization/deserialization.
 - *Async Asset Manager*: Flexible reference counting asset manager. New asset types can be added by third-party code to the manager.
 - *Hot-reloading of assets and shaders*: All in-game resources and shaders can be hot-reloaded.
 - *Virtual file system*: Async read/write. Directories or archives can be mounted as virtual directories.
@@ -42,6 +42,9 @@ Many of the engine features are implemented in the plugins:
 - [sound](src/sound): Simple sound system. Audio mixer and 2d-sounds. 
 - [input](src/input): Input system with gamepad and touch support
 - [3dtools](src/3dtools): 3D rendering tools: support for GLTF 3d models, basic debug primitive creation and drawing
+- [astar](src/astar): A* path-finding implementation plugin (see the readme in the directory for more info)
+- [collision](src/collision): 2.5D/Isometric Collision detection plugin
+- [utility](src/utility): misc utility functionality. Currently, _spline_ and _noise_ generator
 
 #### Debugging and Profiling
 - *Remote Profiler*: Integrated *Remotery* for remote debugger/command console and log viewer.
@@ -66,6 +69,7 @@ But as the engine is in it's early age, the current platforms are built and test
   - libxrandr-dev
   - libxi-dev
   - libasound2-dev (if you are planning to build `sound` plugin)
+  - libglew-dev
 - __MacOS__: Tested on MacOS High Sierra - AppleClang 9.1.0
 - __Android__: For android, there is a python script [android.py](scripts/build-tools/android.py) which takes care of preparing android project structure, building the code and packaging the final APK. please read the begining of ```android.py```.
 - __RaspberryPI__: Tested on RPi1 ModelB Ubuntu-jessie (gcc Raspbian 4.9.2). Package requirements:
@@ -129,6 +133,7 @@ But as the engine is in it's early age, the current platforms are built and test
 - [basis_universal](https://github.com/BinomialLLC/basis_universal): Basis Universal GPU Texture Codec 
 - [fontstash](https://github.com/memononen/fontstash): Light-weight online font texture atlas builder *(used in 2dtools plugin)*
 - [cgltf](https://github.com/jkuhlmann/cgltf): Single-file glTF 2.0 loader and writer written in C99 *(used in 3dtools plugin)*
+- [cute_headers](https://github.com/RandyGaul/cute_headers): Randy Gaul's header libs (cute_c2.h used in collision plugin)
 
 [License (BSD 2-clause)](https://github.com/septag/rizz/blob/master/LICENSE)
 --------------------------------------------------------------------------

@@ -105,14 +105,10 @@ static bool init()
                                                          .size = sizeof(uint16_t) * MAX_INDICES });
 
     char shader_path[RIZZ_MAX_PATH];
-    g_ds.shader = the_asset->load(
-        "shader",
-        ex_shader_path(shader_path, sizeof(shader_path), "/assets/shaders", "drawsprite.sgs"), NULL,
-        0, NULL, 0);
-    g_ds.shader_wire = the_asset->load(
-        "shader",
-        ex_shader_path(shader_path, sizeof(shader_path), "/assets/shaders", "drawsprite_wire.sgs"),
-        NULL, 0, NULL, 0);
+    g_ds.shader = the_asset->load("shader",
+        ex_shader_path(shader_path, sizeof(shader_path), "/assets/shaders", "drawsprite.sgs"), NULL, 0, NULL, 0);
+    g_ds.shader_wire = the_asset->load("shader",
+        ex_shader_path(shader_path, sizeof(shader_path), "/assets/shaders", "drawsprite_wire.sgs"), NULL, 0, NULL, 0);
 
     // pipeline
     sg_pipeline_desc pip_desc = { .layout.buffers[0].stride = sizeof(drawsprite_vertex),
@@ -160,6 +156,7 @@ static bool init()
                                                                   .size = sx_vec2f(SPRITE_WIDTH, 0),
                                                                   .color = sx_colorn(0xffffffff) });
     }
+
     return true;
 }
 
@@ -338,7 +335,6 @@ static void render()
         the_font->pop_state(font);
     }
 
-
     the_gfx->staged.end_pass();
     the_gfx->staged.end();
 
@@ -364,7 +360,7 @@ rizz_plugin_decl_main(drawsprite, plugin, e)
 {
     switch (e) {
     case RIZZ_PLUGIN_EVENT_STEP:
-        update((float)sx_tm_sec(the_core->delta_tick()));
+        update(the_core->delta_time());
         render();
         break;
 
@@ -380,7 +376,7 @@ rizz_plugin_decl_main(drawsprite, plugin, e)
         the_imgui = plugin->api->get_api_byname("imgui", 0);
         the_sprite = plugin->api->get_api_byname("sprite", 0);
         the_font = plugin->api->get_api_byname("font", 0);
-        sx_assert(the_sprite && "sprite plugin is not loaded!");
+        sx_assertf(the_sprite, "sprite plugin is not loaded!");
 
         if (!init())
             return -1;
@@ -424,8 +420,9 @@ rizz_game_decl_config(conf)
     conf->app_version = 1000;
     conf->app_title = "03 - DrawSprite";
     conf->app_flags |= RIZZ_APP_FLAG_HIGHDPI;
-    conf->window_width = 800;
-    conf->window_height = 600;
+    conf->log_level = RIZZ_LOG_LEVEL_DEBUG;
+    conf->window_width = 1280;
+    conf->window_height = 800;
     conf->swap_interval = 2;
     conf->plugins[0] = "imgui";
     conf->plugins[1] = "2dtools";

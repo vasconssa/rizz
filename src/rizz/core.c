@@ -94,6 +94,7 @@ typedef struct rizz__core_tmpalloc {
 typedef struct rizz__core_cmd {
     char name[32];
     rizz_core_cmd_cb* callback;
+    void* user;
 } rizz__core_cmd;
 
 typedef struct rizz__proxy_alloc_header {
@@ -263,7 +264,7 @@ static void rizz__log_register_backend(const char* name,
 {    // backend name must be unique
     for (int i = 0, c = sx_array_count(g_core.log_backends); i < c; i++) {
         if (sx_strequal(g_core.log_backends[i].name, name)) {
-            sx_assert_rel(0 && "duplicate backend name/already registered?");
+            sx_assert_always(0 && "duplicate backend name/already registered?");
             return;
         }
     }
@@ -321,7 +322,7 @@ static void rizz__log_backend_debugger(const rizz_log_entry* entry, void* user)
                     entry->text);
         OutputDebugStringA(text);
     } else {
-        sx_assert_rel(0 && "out of stack memory");
+        sx_assert_always(0 && "out of stack memory");
     }
 #else
     sx_unused(entry);
@@ -355,7 +356,7 @@ static void rizz__log_backend_terminal(const rizz_log_entry* entry, void* user)
                     entry->text, close_fmt);
         puts(text);
     } else {
-        sx_assert_rel(0 && "out of stack memory");
+        sx_assert_always(0 && "out of stack memory");
     }
 }
 
@@ -401,7 +402,7 @@ static void rizz__log_backend_android(const rizz_log_entry* entry, void* user)
         sx_snprintf(text, new_size, "%s: %s", source, entry->text);
         __android_log_write(apriority, g_core.app_name, text);
     } else {
-        sx_assert_rel(0 && "out of stack memory");
+        sx_assert_always(0 && "out of stack memory");
     }
 }
 #endif // SX_PLATFORM_ANDROID
@@ -420,13 +421,12 @@ static void rizz__log_backend_remotery(const rizz_log_entry* entry, void* user)
         sx_snprintf(text, new_size, "%s%s%s", source, k_log_entry_types[entry->type], entry->text);
         rmt_LogText(text);
     } else {
-        sx_assert_rel(0 && "out of stack memory");
+        sx_assert_always(0 && "out of stack memory");
     }
 }
 
-static void rizz__log_dispatch_entry(const rizz_log_entry* entry)
+static void rizz__log_dispatch_entry(rizz_log_entry* entry)
 {
-    
     // built-in backends are thread-safe, so we pass them immediately
     rizz__log_backend_terminal(entry, NULL);
     rizz__log_backend_debugger(entry, NULL);
@@ -436,13 +436,16 @@ static void rizz__log_dispatch_entry(const rizz_log_entry* entry)
 #endif
 
     if (g_core.num_log_backends > 0) {
+        if (entry->channels == 0) {
+            entry->channels = 0xffffffff;
+        }
+
         rizz__log_pipe pipe =
             g_core.jobs ? g_core.log_pipes[sx_job_thread_index(g_core.jobs)] : g_core.log_pipes[0];
 
         sx_str_t text = sx_strpool_add(pipe.strpool, entry->text, entry->text_len);
         sx_str_t source = entry->source_file ? sx_strpool_add(pipe.strpool, entry->source_file,
-                                                              entry->source_file_len)
-                                             : 0;
+                                                              entry->source_file_len) : 0;
         rizz__log_entry_internal entry_internal = { .e = *entry,
                                                     .text_id = text,
                                                     .source_id = source,
@@ -456,8 +459,7 @@ static void rizz__set_log_level(rizz_log_level level)
     g_core.log_level = level;
 }
 
-static void rizz__print_info(uint32_t channels, const char* source_file, int line, const char* fmt,
-                             ...)
+static void rizz__print_info(uint32_t channels, const char* source_file, int line, const char* fmt, ...)
 {
     if (g_core.log_level < RIZZ_LOG_LEVEL_INFO) {
         return;
@@ -466,7 +468,7 @@ static void rizz__print_info(uint32_t channels, const char* source_file, int lin
     int fmt_len = sx_strlen(fmt);
     char* text = alloca(fmt_len + 1024);    // reserve only 1k for format replace strings
     if (!text) {
-        sx_assert_rel(0 && "out of stack memory");
+        sx_assert_always(0 && "out of stack memory");
         return;
     }
 
@@ -484,8 +486,7 @@ static void rizz__print_info(uint32_t channels, const char* source_file, int lin
                                                 .line = line });
 }
 
-static void rizz__print_debug(uint32_t channels, const char* source_file, int line, const char* fmt,
-                              ...)
+static void rizz__print_debug(uint32_t channels, const char* source_file, int line, const char* fmt, ...)
 {
 #ifdef _DEBUG
     if (g_core.log_level < RIZZ_LOG_LEVEL_DEBUG) {
@@ -495,7 +496,7 @@ static void rizz__print_debug(uint32_t channels, const char* source_file, int li
     int fmt_len = sx_strlen(fmt);
     char* text = alloca(fmt_len + 1024);    // reserve only 1k for format replace strings
     if (!text) {
-        sx_assert_rel(0 && "out of stack memory");
+        sx_assert_always(0 && "out of stack memory");
         return;
     }
 
@@ -529,7 +530,7 @@ static void rizz__print_verbose(uint32_t channels, const char* source_file, int 
     int fmt_len = sx_strlen(fmt);
     char* text = alloca(fmt_len + 1024);    // reserve only 1k for format replace strings
     if (!text) {
-        sx_assert_rel(0 && "out of stack memory");
+        sx_assert_always(0 && "out of stack memory");
         return;
     }
 
@@ -557,7 +558,7 @@ static void rizz__print_error(uint32_t channels, const char* source_file, int li
     int fmt_len = sx_strlen(fmt);
     char* text = alloca(fmt_len + 1024);    // reserve only 1k for format replace strings
     if (!text) {
-        sx_assert_rel(0 && "out of stack memory");
+        sx_assert_always(0 && "out of stack memory");
         return;
     }
 
@@ -585,7 +586,7 @@ static void rizz__print_warning(uint32_t channels, const char* source_file, int 
     int fmt_len = sx_strlen(fmt);
     char* text = alloca(fmt_len + 1024);    // reserve only 1k for format replace strings
     if (!text) {
-        sx_assert_rel(0 && "out of stack memory");
+        sx_assert_always(0 && "out of stack memory");
         return;
     }
 
@@ -734,7 +735,7 @@ static void rizz__log_init_file(const char* logfile)
         fprintf(f, "%s", asctime(localtime(&t)));
         fclose(f);
     } else {
-        sx_assert(0 && "could not write to log file");
+        sx_assertf(0, "could not write to log file");
         g_core.flags &= ~RIZZ_CORE_FLAG_LOG_TO_FILE;
     }
 }
@@ -763,14 +764,129 @@ static void rizz__job_thread_shutdown_cb(sx_job_context* ctx, int thread_index, 
 static void rizz__rmt_input_handler(const char* text, void* context)
 {
     sx_unused(context);
+    the__core.execute_console_command(text);
+}
 
+static void rizz__rmt_read_string(sx_mem_reader* r, char* str, uint32_t size)
+{
+    uint32_t len;
+    uint32_t max_len = size - 1;
+    sx_mem_read(r, &len, sizeof(len));
+    sx_mem_read(r, str, sx_min(max_len, len));
+    str[len] = '\0';
+}
+
+static void rizz__rmt_read_sample(sx_mem_reader* r)
+{
+    uint32_t name_hash;
+    uint32_t unique_id;
+    uint8_t unique_id_html_color[7];
+    double us_start;
+    double us_length;
+    double us_self;
+    uint32_t num_calls;
+    uint32_t max_recurse_depth;
+    sx_mem_read(r, &name_hash, sizeof(name_hash));
+    sx_mem_read(r, &unique_id, sizeof(unique_id));
+    sx_mem_read(r, &unique_id_html_color, sizeof(unique_id_html_color));
+    sx_mem_read(r, &us_start, sizeof(us_start));
+    sx_mem_read(r, &us_length, sizeof(us_length));
+    sx_mem_read(r, &us_self, sizeof(us_self));
+    sx_mem_read(r, &num_calls, sizeof(num_calls));
+    sx_mem_read(r, &max_recurse_depth, sizeof(max_recurse_depth));
+
+    float length_ms = (float)us_length / 1000.0f;
+    float self_ms = (float)us_self / 1000.0f;
+
+    char msg[256];
+    sx_snprintf(msg, sizeof(msg), "\tname: 0x%x, Time: %.3f, Self: %.3f\n", name_hash, length_ms, self_ms);
+    //OutputDebugStringA(msg);
+
+    uint32_t num_childs;
+    sx_mem_read(r, &num_childs, sizeof(num_childs));
+    for (uint32_t i = 0; i < num_childs; i++) {
+        rizz__rmt_read_sample(r);
+    }
+}
+
+static void rizz__rmt_view_handler(const void* data, uint32_t size, void* context)
+{
+    sx_unused(context);
+
+    sx_mem_reader r;
+    sx_mem_init_reader(&r, data, size);
+
+    const uint32_t smpl_fourcc = sx_makefourcc('S', 'M', 'P', 'L');
+
+    #define WEBSOCKET_MAX_FRAME_HEADER_SIZE 10
+    char empty_frame_header[WEBSOCKET_MAX_FRAME_HEADER_SIZE];
+    sx_mem_read(&r, empty_frame_header, sizeof(empty_frame_header));
+
+    uint32_t buff_size = *((uint32_t*)(empty_frame_header + 4));
+    sx_unused(buff_size);
+
+    uint32_t flag[2];
+    sx_mem_read(&r, flag, sizeof(flag));
+    if (flag[0] != smpl_fourcc) {
+        return;
+    }
+
+    char thread_name[256];
+    uint32_t num_samples;
+    uint32_t digest_hash;
+    rizz__rmt_read_string(&r, thread_name, sizeof(thread_name));
+    sx_mem_read(&r, &num_samples, sizeof(num_samples));
+    sx_mem_read(&r, &digest_hash, sizeof(digest_hash));
+
+    char msg[256];
+    sx_snprintf(msg, sizeof(msg), "%s:\n", thread_name);
+    // OutputDebugStringA(msg);
+
+    // read sample tree
+    rizz__rmt_read_sample(&r);
+
+    return;
+}
+
+static void rizz__console_shortcut_callback(void* user)
+{
+    rizz__core_cmd* c = user;
+    the__core.execute_console_command(c->name);
+}
+
+static void rizz__register_console_command(const char* cmd, rizz_core_cmd_cb* callback, 
+                                           const char* shortcut, void* user)
+{
+    sx_assert(cmd);
+    sx_assert(cmd[0]);
+    sx_assert(callback);
+
+    rizz__core_cmd c;
+    sx_strcpy(c.name, sizeof(c.name), cmd);
+    c.callback = callback;
+    c.user = user;
+    sx_array_push(rizz__alloc(RIZZ_MEMID_CORE), g_core.console_cmds, c);
+
+    if (shortcut && shortcut[0]) {
+        the__app.register_shortcut(shortcut, rizz__console_shortcut_callback, &sx_array_last(g_core.console_cmds));
+    }
+}
+
+static void rizz__execute_console_command(const char* cmd_and_args)
+{
     // parse text into argc/argv
     int argc = 0;
     char arg[256];
 
-    const char* cline = sx_skip_whitespace(text);
+    const char* cline = sx_skip_whitespace(cmd_and_args);
     while (cline && *cline) {
         for (char c = *cline; !sx_isspace(c) && *cline; c = *(++cline)) {
+            if (*cline == '\"') {
+                sx_str_block block = sx_findblock(cline, '\"', '\"');
+                if (block.end) {
+                    cline = block.end + 1;
+                }
+            }
         }
         cline = sx_skip_whitespace(cline);
         argc++;
@@ -782,13 +898,22 @@ static void rizz__rmt_input_handler(const char* text, void* context)
     char** argv = sx_malloc(alloc, sizeof(char*) * argc);
     sx_assert(argv);
 
-    cline = sx_skip_whitespace(text);
+    cline = sx_skip_whitespace(cmd_and_args);
     int arg_idx = 0;
     while (cline && *cline) {
         int char_idx = 0;
-        for (char c = *cline; !sx_isspace(c) && *cline && char_idx < (int)sizeof(arg);
-             c = *(++cline), ++char_idx) {
-            arg[char_idx] = c;
+        for (char c = *cline; !sx_isspace(c) && *cline && char_idx < (int)sizeof(arg); c = *(++cline), ++char_idx) {
+            if (*cline == '\"') {
+                sx_str_block block = sx_findblock(cline, '\"', '\"');
+                if (block.end) {
+                    cline = block.end + 1;
+                    char_idx = (int)(uintptr_t)(block.end - block.start + 1);
+                    sx_memcpy(arg, block.start, char_idx);
+                    break;
+                }
+            } else {
+                arg[char_idx] = c;
+            }
         }
         arg[char_idx] = '\0';
         cline = sx_skip_whitespace(cline);
@@ -802,33 +927,23 @@ static void rizz__rmt_input_handler(const char* text, void* context)
         if (sx_strequal(g_core.console_cmds[i].name, argv[0])) {
             cmd_found = true;
             int r;
-            if ((r = g_core.console_cmds[i].callback(argc, argv)) < 0) {
-                char err_msg[256];
-                sx_snprintf(err_msg, sizeof(err_msg), "command '%s' failed with error: %d", argv[0],
-                            r);
-                rmt_LogText(err_msg);
+            if ((r = g_core.console_cmds[i].callback(argc, argv, g_core.console_cmds[i].user)) <
+                0) {
+                rizz__log_warn("command '%s' failed with error code %d", argv[0], r);
             }
             break;
         }
     }
 
     if (!cmd_found) {
-        char msg[256];
-        sx_snprintf(msg, sizeof(msg), "command '%s' not found", argv[0]);
-        rmt_LogText(msg);
+        rizz__log_warn("command '%s' not found", argv[0]);
     }
-}
 
-static void rizz__core_register_console_command(const char* cmd, rizz_core_cmd_cb* callback)
-{
-    sx_assert(cmd);
-    sx_assert(cmd[0]);
-    sx_assert(callback);
+    for (int i = 0; i < argc; i++) {
+        sx_free(alloc, argv[i]);
+    }
+    sx_free(alloc, argv);
 
-    rizz__core_cmd c;
-    sx_strcpy(c.name, sizeof(c.name), cmd);
-    c.callback = callback;
-    sx_array_push(rizz__alloc(RIZZ_MEMID_CORE), g_core.console_cmds, c);
 }
 
 static inline void rizz__atomic_max(sx_atomic_size* _max, intptr_t val)
@@ -882,10 +997,7 @@ static void* rizz__tmp_alloc_cb(void* ptr, size_t size, uint32_t align, const ch
         if (ptr) {
             size_t old_size = *((size_t*)ptr - 1);
             sx_memmove(new_ptr, ptr, sx_min(old_size, size));
-            //sx_memset((uint8_t*)new_ptr + old_size, 0x0, size - old_size);
-        } else {
-            //sx_memset(new_ptr, 0x0, size);
-        }
+        } 
 
         size_t total = inst->start_offset + inst->end_offset;
         inst->parent->peak = sx_max(inst->parent->peak, total);
@@ -1037,7 +1149,7 @@ static void* rizz__track_alloc_cb(void* ptr, size_t size, uint32_t align, const 
                       header->track_item_idx < sx_array_count(talloc->items));
             talloc->size -= header->size;
             rizz_track_alloc_item* mem_item = &talloc->items[header->track_item_idx];
-            sx_assert(mem_item->ptr == ptr && "memory corruption");
+            sx_assertf(mem_item->ptr == ptr, "memory corruption");
             mem_item->ptr = NULL;    // invalidate memory item pointer
 
             if (header->track_item_idx != sx_array_count(talloc->items) - 1) {
@@ -1105,6 +1217,18 @@ static void* rizz__track_alloc_cb(void* ptr, size_t size, uint32_t align, const 
 
         return ptr;
     }
+}
+
+static int rizz__core_echo_command(int argc, char* argv[], void* user)
+{
+    sx_unused(user);
+    
+    if (argc > 1) {
+        rizz__log_debug(argv[1]);
+        return 0;
+    }
+
+    return -1;
 }
 
 bool rizz__core_init(const rizz_config* conf)
@@ -1232,12 +1356,6 @@ bool rizz__core_init(const rizz_config* conf)
                    sx_job_num_worker_threads(g_core.jobs), conf->job_max_fibers,
                    conf->job_stack_size);
 
-    // reflection
-    if (!rizz__refl_init(rizz__alloc(RIZZ_MEMID_REFLECT), 0)) {
-        rizz__log_error("initializing reflection failed");
-        return false;
-    }
-
     // asset system
 #if SX_PLATFORM_ANDROID || SX_PLATFORM_IOS
     const char* asset_dbpath = "/assets/asset-db.json";
@@ -1261,6 +1379,7 @@ bool rizz__core_init(const rizz_config* conf)
         rmt_config->msSleepBetweenServerUpdates = conf->profiler_update_interval_ms;
         rmt_config->reuse_open_port = true;
         rmt_config->input_handler = rizz__rmt_input_handler;
+        rmt_config->view_handler = rizz__rmt_view_handler;
     }
     rmtError rmt_err;
     if ((rmt_err = rmt_CreateGlobalInstance(&g_core.rmt)) != RMT_ERROR_NONE) {
@@ -1334,6 +1453,8 @@ bool rizz__core_init(const rizz_config* conf)
 
     rizz__json_init();
 
+    the__core.register_console_command("echo", rizz__core_echo_command, NULL, NULL);
+
     return true;
 }
 
@@ -1381,7 +1502,6 @@ void rizz__core_release()
     rizz__asset_release();
     rizz__gfx_release();
     rizz__vfs_release();
-    rizz__refl_release();
 
     if (g_core.rmt) {
         rmt_DestroyGlobalInstance(g_core.rmt);
@@ -1434,7 +1554,7 @@ void rizz__core_release()
 
 void rizz__core_frame()
 {
-    rizz__profile_begin(FRAME, 0);
+    rizz__profile_begin(Frame, 0);
     {
         static uint32_t gpu_frame_hash = 0;
         the__gfx.imm.begin_profile_sample("FRAME", &gpu_frame_hash);
@@ -1459,7 +1579,7 @@ void rizz__core_frame()
     // reset temp allocators
     for (int i = 0, c = g_core.num_threads; i < c; i++) {
         rizz__core_tmpalloc* t = &g_core.tmp_allocs[i];
-        sx_assert(t->stack_depth == 0 && "not all tmp_allocs are popped");
+        sx_assertf(t->stack_depth == 0, "not all tmp_allocs are popped");
         sx_array_clear(t->alloc_stack);
         t->stack_depth = 0;
         t->frame_peak = 0;
@@ -1519,7 +1639,7 @@ void rizz__core_frame()
     ++g_core.frame_idx;
 
     the__gfx.imm.end_profile_sample();
-    rizz__profile_end(FRAME);
+    rizz__profile_end(Frame);
 }
 
 static const sx_alloc* rizz__core_tmp_alloc_push(void)
@@ -1557,7 +1677,7 @@ static void rizz__core_tmp_alloc_pop(void)
         sx_assert(talloc->stack_depth > 0);
         --talloc->stack_depth;
     } else {
-        sx_assert(0 && "no matching tmp_alloc_push for the call tmp_alloc_pop");
+        sx_assertf(0, "no matching tmp_alloc_push for the call tmp_alloc_pop");
     }
 }
 
@@ -1667,8 +1787,7 @@ void rizz__core_fix_callback_ptrs(const void** ptrs, const void** new_ptrs, int 
 }
 
 static void rizz__core_tls_register(const char* name, void* user,
-                                    void* (*init_cb)(int thread_idx, uint32_t thread_id,
-                                                     void* user))
+                                    void* (*init_cb)(int thread_idx, uint32_t thread_id, void* user))
 {
     sx_assert(name);
     sx_assert(init_cb);
@@ -1701,7 +1820,7 @@ static void* rizz__core_tls_var(const char* name)
         }
     }
 
-    sx_assert(0 && "tls_var not registered");
+    sx_assertf(0, "tls_var not registered");
     return NULL;
 }
 
@@ -1765,7 +1884,8 @@ rizz_api_core the__core = { .heap_alloc = rizz__heap_alloc,
                             .set_log_level = rizz__set_log_level,
                             .begin_profile_sample = rizz__begin_profile_sample,
                             .end_profile_sample = rizz__end_profile_sample,
-                            .register_console_command = rizz__core_register_console_command,
+                            .register_console_command = rizz__register_console_command,
+                            .execute_console_command = rizz__execute_console_command,
                             .show_graphics_debugger = rizz__show_graphics_debugger,
                             .show_memory_debugger = rizz__show_memory_debugger,
                             .show_log = rizz__show_log };

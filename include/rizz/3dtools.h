@@ -30,7 +30,16 @@ typedef struct rizz_api_prims3d {
                      sx_color tint);
     void (*draw_boxes)(const sx_box* boxes, int num_boxes, const sx_mat4* viewproj_mat,
                        rizz_prims3d_map_type map_type, const sx_color* tints);
-    bool (*generate_box_geometry)(const sx_alloc* alloc, rizz_prims3d_geometry* geo);
+    void (*draw_sphere)(sx_vec3 center, float radius, const sx_mat4* viewproj_mat,
+                        rizz_prims3d_map_type map_type, sx_color tint);
+    void (*draw_spheres)(const sx_vec3* centers, const float* radiuss, int count, 
+                         const sx_mat4* viewproj_mat, rizz_prims3d_map_type map_type, 
+                         const sx_color* tints);                            
+
+    // coordinate system: right-handed Z-up, winding: CW
+    bool (*generate_box_geometry)(const sx_alloc* alloc, rizz_prims3d_geometry* geo, sx_vec3 extents);
+    bool (*generate_sphere_geometry)(const sx_alloc* alloc, rizz_prims3d_geometry* geo,
+                                       float radius, int num_segments, int num_rings);
     void (*free_geometry)(rizz_prims3d_geometry* geo, const sx_alloc* alloc);
 
     // aabbs are always wireframe. and alpha in color tint doesn't affect them
@@ -45,6 +54,7 @@ typedef struct rizz_api_prims3d {
     void (*draw_path)(const sx_vec3* points, int num_points, const sx_mat4* viewproj_mat, const sx_color color);
     void (*draw_line)(const sx_vec3 p0, const sx_vec3 p1, const sx_mat4* viewproj_mat, const sx_color color);
 
+    void (*set_draw_api)(rizz_api_gfx_draw* draw_api);
     void (*set_max_instances)(int max_instances);
     void (*set_max_vertices)(int max_verts);
     void (*set_max_indices)(int max_indices);

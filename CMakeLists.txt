@@ -212,6 +212,9 @@ if (MSVC)
     if (MSVC_MULTITHREADED_COMPILE AND NOT CMAKE_MAKE_PROGRAM MATCHES "ninja.exe")
         add_compile_options(/MP)    # multiprocessor compilation
     endif()
+    set(CMAKE_CXX_FLAGS_DEBUG "${CMAKE_CXX_FLAGS_DEBUG} /Ob1")
+    set(CMAKE_C_FLAGS_DEBUG "${CMAKE_CXX_FLAGS_DEBUG} /Ob1")
+
     if (MSVC_STATIC_RUNTIME) 
         rizz__remove_compile_options(CMAKE_CXX_FLAGS_RELEASE "${CMAKE_CXX_FLAGS_RELEASE}" "/MD")
         rizz__remove_compile_options(CMAKE_C_FLAGS_RELEASE "${CMAKE_C_FLAGS_RELEASE}" "/MD")
@@ -268,8 +271,11 @@ set(native_projects sx
                     imgui
                     2dtools
                     3dtools 
+                    astar 
+                    utility 
                     sound
-                    input)
+                    input
+                    collision)
 
 if (installed_plugins)
     message(STATUS "The following plugins are found:")
@@ -302,9 +308,12 @@ set(example_projects 01-hello
                      03-drawsprite 
                      04-animsprite
                      05-playsound
-					 06-sdf
+                     06-sdf
                      07-nbody
-                     08-draw3d)
+                     08-draw3d
+                     09-pathfind
+                     10-collideboxes
+                     11-pathspline)
                      
 # exceptions
 # currently compute-shaders are only supported on windows, so we ignore examples that use them
